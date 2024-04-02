@@ -1,0 +1,6 @@
+float32[] embedding
+int8 num
+---
+float32[] score
+string[] metadata
+bytes[] data
