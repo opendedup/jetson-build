@@ -1,0 +1,2 @@
+string metadata
+float32 distance

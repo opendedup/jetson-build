@@ -1,11 +1,11 @@
-from setuptools import setup
+from setuptools import find_packages, setup
 
-package_name = 'asr'
+package_name = 'riva_asr'
 
 setup(
     name=package_name,
     version='0.0.0',
-    packages=[package_name],
+    packages=find_packages(exclude=['test']),
     data_files=[
         ('share/ament_index/resource_index/packages',
             ['resource/' + package_name]),
@@ -13,15 +13,15 @@ setup(
     ],
     install_requires=['setuptools'],
     zip_safe=True,
-    maintainer='nvidia',
+    maintainer='Sam Silverberg',
     maintainer_email='sam.silverberg@gmail.com',
     description='TODO: Package description',
-    license='TODO: License declaration',
+    license='Apache-2.0',
     tests_require=['pytest'],
     entry_points={
         'console_scripts': [
-            'riva_asr = asr.riva_asr:main',
-            'listener = asr.asr_subscriber:main'
+            'riva_asr = riva_asr.riva_asr:main',
+            'listener = riva_asr.asr_subscriber:main'
         ],
     },
 )

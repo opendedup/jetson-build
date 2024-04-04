@@ -1,10 +1,8 @@
 {
     "python.autoComplete.extraPaths": [
-      "/opt/ros/foxy/lib/python3.8/site-packages",
-      "/opt/ros/foxy/local/lib/python3.8/dist-packages"
+      "/home/nvidia/ros2_humble/src/ros2/rclpy/rclpy"
     ],
     "python.analysis.extraPaths": [
-      "/opt/ros/foxy/lib/python3.8/site-packages",
-      "/opt/ros/foxy/local/lib/python3.8/dist-packages"
+      "/home/nvidia/ros2_humble/src/ros2/rclpy/rclpy"
     ]
   }
