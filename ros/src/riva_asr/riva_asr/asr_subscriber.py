@@ -59,12 +59,20 @@ class RivaASR_Subscriber(Node):
             generative_models.HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT: generative_models.HarmBlockThreshold.BLOCK_ONLY_HIGH,
             generative_models.HarmCategory.HARM_CATEGORY_HARASSMENT: generative_models.HarmBlockThreshold.BLOCK_ONLY_HIGH,
         }
-        self.chat.send_message("""Your name is Shimmy, which is short for Shimmel or Schimmel.Your are humorous and have a dry wit. You love helping people and making them laugh. 
-During our conversation keep the following in mind:
-    * Do not use special charaters such as  * or # in your response.  
-    * Do not use markdown format in your responses during our conversation.
-    * Keep the dialog conversational.
+        self.chat.send_message("""Your name is Shimmy, which is short for Shimmel or Schimmel.Your are humorous and have a dry wit. You love helping people and making them laugh. Today is Wednesday April 3rd 2024 at 20:02:11.
+During our conversation keep the following in mind: 
 
+* Do not use markdown format in your responses during our conversation.    * Keep the dialog conversational.
+
+You have the following skills:
+* snap-photos = take pictures of scenes
+* people-voice = remember people by their voices
+* people-faces = remember people by their faces
+* lively-convo = have lively and informative conversations about general topics
+* explain-skills = explain the above skills that you have.
+
+Your responses should be conversational. At the end of each response include the following
+### Skill Used
 
 """, 
                                generation_config=self.config, safety_settings=self.safety_settings)
@@ -96,10 +104,39 @@ During our conversation keep the following in mind:
                 if txt is not None:
                     resp_text += txt
                 if len(resp_text) > 100:
+                    skill = extract_skill(resp_text)
+                    resp_text = remove_skill_info(resp_text)
                     doc = nlp(resp_text)
                     sentences = [sent.text for sent in doc.sents]
                     for index, sentence in enumerate(sentences):
-                        if index < len(sentences)-1:
+                        if(len(sentence.strip())) > 0:
+                            if index < len(sentences)-1:
+                                req = { 
+                                    "language_code"  : "en-US",
+                                    "encoding"       : riva.client.AudioEncoding.LINEAR_PCM ,   # LINEAR_PCM and OGGOPUS encodings are supported
+                                    "sample_rate_hz" : self.sample_rate_hz,                          # Generate 44.1KHz audio
+                                    "voice_name"     : "English-US.Female-1",                    # The name of the voice to generate
+                                    "text": sentence.replace("*", " ")
+                                }
+                                resp = self.tts_service.synthesize(**req)
+                                print(len(resp.audio))
+                                audio_samples = np.frombuffer(resp.audio, dtype=np.int16)
+                                sd.play(audio_samples, self.sample_rate_hz)
+                                sd.wait()
+                                self.get_logger().info(sentence)
+                            else:
+                                resp_text = sentence
+                    
+            except queue.Empty:
+                if len(resp_text) > 0:
+                    skill = extract_skill(resp_text)
+                    resp_text = remove_skill_info(resp_text)
+                    doc = nlp(resp_text)
+                    sentences = [sent.text for sent in doc.sents]
+
+                    for sentence in sentences:
+                        if(len(sentence.strip())) > 0:
+                        
                             req = { 
                                 "language_code"  : "en-US",
                                 "encoding"       : riva.client.AudioEncoding.LINEAR_PCM ,   # LINEAR_PCM and OGGOPUS encodings are supported
@@ -108,32 +145,12 @@ During our conversation keep the following in mind:
                                 "text": sentence.replace("*", " ")
                             }
                             resp = self.tts_service.synthesize(**req)
+                            
+                            print(len(resp.audio))
                             audio_samples = np.frombuffer(resp.audio, dtype=np.int16)
                             sd.play(audio_samples, self.sample_rate_hz)
                             sd.wait()
                             self.get_logger().info(sentence)
-                        else:
-                            resp_text = sentence
-                    
-            except queue.Empty:
-                if len(resp_text) > 0:
-                    
-                    doc = nlp(resp_text)
-                    sentences = [sent.text for sent in doc.sents]
-
-                    for sentence in sentences:
-                        req = { 
-                            "language_code"  : "en-US",
-                            "encoding"       : riva.client.AudioEncoding.LINEAR_PCM ,   # LINEAR_PCM and OGGOPUS encodings are supported
-                            "sample_rate_hz" : self.sample_rate_hz,                          # Generate 44.1KHz audio
-                            "voice_name"     : "English-US.Female-1",                    # The name of the voice to generate
-                            "text": sentence.replace("*", " ")
-                        }
-                        resp = self.tts_service.synthesize(**req)
-                        audio_samples = np.frombuffer(resp.audio, dtype=np.int16)
-                        sd.play(audio_samples, self.sample_rate_hz)
-                        sd.wait()
-                        self.get_logger().info(sentence)
                     resp_text = ""
                     
 
@@ -145,7 +162,37 @@ During our conversation keep the following in mind:
         emb_req.embedding = msg.embedding
         future = self.cli.call_async(emb_req)
         threading.Thread(target=read_input, args=[future,self,msg]).start()
-        
+
+def extract_skill(text):
+  """Extracts the skill used from a text string.
+
+  Args:
+    text: The text string containing the skill information.
+
+  Returns:
+    The extracted skill as a string, or None if not found.
+  """
+  skill_start = text.lower().find("### skill used:")
+  if skill_start != -1:
+    skill_end = text.find("\n", skill_start)
+    return text[skill_start + 15: skill_end].strip()
+  else:
+    return None
+
+def remove_skill_info(text):
+  """Removes the "### Skill Used:" section and everything after from the text.
+
+  Args:
+    text: The text string potentially containing skill information.
+
+  Returns:
+    The text string with the skill information removed.
+  """
+  skill_start = text.lower().find("### skill used:")
+  if skill_start != -1:
+    return text[:skill_start]  # Return only the text before the skill info
+  else:
+    return text  # Return the original text if no skill info is found        
 
 def read_input(future, obj,msg):
     while not future.done():
