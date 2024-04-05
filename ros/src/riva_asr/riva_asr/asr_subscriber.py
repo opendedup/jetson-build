@@ -30,6 +30,8 @@ import threading
 import time
 import json
 import spacy
+import queue
+import traceback
 
 
 class RivaASR_Subscriber(Node):
@@ -69,10 +71,10 @@ You have the following skills:
 * people-voice = remember people by their voices
 * people-faces = remember people by their faces
 * lively-convo = have lively and informative conversations about general topics
-* explain-skills = explain the above skills that you have.
+* explain-skills = explain the above skills that you have but to not use the short name in your explanation.
 
 Your responses should be conversational. At the end of each response include the following
-### Skill Used
+### Skill Used: the short name for the skill used ###
 
 """, 
                                generation_config=self.config, safety_settings=self.safety_settings)
@@ -95,65 +97,77 @@ Your responses should be conversational. At the end of each response include the
         t = threading.Thread(target=self.tworker)
         t.start()
     
+    
     def tworker(self):
         resp_text = ""
         nlp = spacy.load("en_core_web_sm")
-        while True:
-            try:
-                txt = self.q.get(block=True, timeout=.5)
-                if txt is not None:
-                    resp_text += txt
-                if len(resp_text) > 100:
-                    skill = extract_skill(resp_text)
-                    resp_text = remove_skill_info(resp_text)
-                    doc = nlp(resp_text)
-                    sentences = [sent.text for sent in doc.sents]
-                    for index, sentence in enumerate(sentences):
-                        if(len(sentence.strip())) > 0:
-                            if index < len(sentences)-1:
-                                req = { 
-                                    "language_code"  : "en-US",
-                                    "encoding"       : riva.client.AudioEncoding.LINEAR_PCM ,   # LINEAR_PCM and OGGOPUS encodings are supported
-                                    "sample_rate_hz" : self.sample_rate_hz,                          # Generate 44.1KHz audio
-                                    "voice_name"     : "English-US.Female-1",                    # The name of the voice to generate
-                                    "text": sentence.replace("*", " ")
-                                }
-                                resp = self.tts_service.synthesize(**req)
-                                print(len(resp.audio))
-                                audio_samples = np.frombuffer(resp.audio, dtype=np.int16)
-                                sd.play(audio_samples, self.sample_rate_hz)
-                                sd.wait()
-                                self.get_logger().info(sentence)
-                            else:
-                                resp_text = sentence
-                    
-            except queue.Empty:
-                if len(resp_text) > 0:
-                    skill = extract_skill(resp_text)
-                    resp_text = remove_skill_info(resp_text)
-                    doc = nlp(resp_text)
-                    sentences = [sent.text for sent in doc.sents]
+        block_size=20480
+        stream = sd.RawOutputStream(
+            samplerate=self.sample_rate_hz, blocksize=block_size,
+            device=sd.default.device, channels=1, dtype='int16',
+            callback=stream_sound_callback)
+        with stream:
+            while True:
+                try:
+                    txt = self.q.get(block=True, timeout=.5)
+                    if txt is not None:
+                        resp_text += txt
+                    if len(resp_text) > 50:
+                        skill = extract_skill(resp_text)
+                        self.get_logger().info(f"#############{skill}")
+                        resp_text = remove_skill_info(resp_text)
+                        doc = nlp(resp_text)
+                        sentences = [sent.text for sent in doc.sents][:-1]
+                        resp_text = [sent.text for sent in doc.sents][-1]
+                        if len(sentences) > 0:
+                            talk_text = " ".join(sentences)
+                            
 
-                    for sentence in sentences:
-                        if(len(sentence.strip())) > 0:
-                        
                             req = { 
                                 "language_code"  : "en-US",
                                 "encoding"       : riva.client.AudioEncoding.LINEAR_PCM ,   # LINEAR_PCM and OGGOPUS encodings are supported
                                 "sample_rate_hz" : self.sample_rate_hz,                          # Generate 44.1KHz audio
                                 "voice_name"     : "English-US.Female-1",                    # The name of the voice to generate
-                                "text": sentence.replace("*", " ")
+                                "text": talk_text.replace("*", " ")
                             }
-                            resp = self.tts_service.synthesize(**req)
+                            try:
+                                resp = self.tts_service.synthesize(**req)
+                                dtr = split_array_into_chunks(resp.audio,block_size*2)
+                                for dt in dtr:
+                                    sound_q.put(dt)  # Pre-fill queue
+                                self.get_logger().info(talk_text)
+                            except Exception as error:
+                                self.get_logger().error(error.message)
                             
-                            print(len(resp.audio))
-                            audio_samples = np.frombuffer(resp.audio, dtype=np.int16)
-                            sd.play(audio_samples, self.sample_rate_hz)
-                            sd.wait()
-                            self.get_logger().info(sentence)
-                    resp_text = ""
-                    
-
+                        
+                except queue.Empty:
+                    if len(resp_text) > 0:
+                        skill = extract_skill(resp_text)
+                        self.get_logger().info(f"#############{skill}")
+                        resp_text = remove_skill_info(resp_text)
+                        doc = nlp(resp_text)
+                        sentences = [sent.text for sent in doc.sents]
+                        if len(sentences) > 0:
+                            talk_text = " ".join(sentences)
+                            req = { 
+                                "language_code"  : "en-US",
+                                "encoding"       : riva.client.AudioEncoding.LINEAR_PCM ,   # LINEAR_PCM and OGGOPUS encodings are supported
+                                "sample_rate_hz" : self.sample_rate_hz,                          # Generate 44.1KHz audio
+                                "voice_name"     : "English-US.Female-1",                    # The name of the voice to generate
+                                "text": talk_text.replace("*", " ")
+                            }
+                            try:
+                                resp = self.tts_service.synthesize(**req)
+                                dtr = split_array_into_chunks(resp.audio,block_size*2)
+                                for dt in dtr:
+                                    sound_q.put(dt)  # Pre-fill queue
+                                self.get_logger().info(talk_text)
+                                resp_text = ""
+                            except Exception as error:
+                                self.get_logger().error(error.message)
+                        
+    
+    
 
     def listener_callback(self, msg):
         self.get_logger().info('I heard: "%s"' % msg.chat_text)
@@ -162,6 +176,41 @@ Your responses should be conversational. At the end of each response include the
         emb_req.embedding = msg.embedding
         future = self.cli.call_async(emb_req)
         threading.Thread(target=read_input, args=[future,self,msg]).start()
+
+sound_q = queue.Queue()
+                    
+def stream_sound_callback(outdata, frames, time, status):
+    if status.output_underflow:
+        print('Output underflow: increase blocksize?')
+        raise sd.CallbackAbort
+    assert not status
+    try:
+        data = sound_q.get_nowait()
+        if len(data) < len(outdata):
+            outdata[:len(data)] = data
+            outdata[len(data):] = b'\x00' * (len(outdata) - len(data))
+        else:
+            outdata[:] = data
+    except queue.Empty as e:
+        outdata[:] = b'\x00' * len(outdata)
+    
+def split_array_into_chunks(array, max_length):
+  """Splits an array into chunks with a maximum length of array.
+
+  Args:
+    array: The array to split.
+    max_length: The maximum length of each chunk.
+
+  Returns:
+    A list of chunks.
+  """
+
+  chunks = []
+  for i in range(0, len(array), max_length):
+    chunk = array[i:i + max_length]
+    chunks.append(chunk)
+  return chunks
+
 
 def extract_skill(text):
   """Extracts the skill used from a text string.
@@ -196,7 +245,7 @@ def remove_skill_info(text):
 
 def read_input(future, obj,msg):
     while not future.done():
-        time.sleep(0.1)
+        time.sleep(0.05)
     obj.get_logger().info(future.result().embeddings[0].metadata)
     if len(future.result().embeddings) > 0:
         emb = future.result().embeddings[0]
