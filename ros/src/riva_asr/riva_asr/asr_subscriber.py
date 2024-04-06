@@ -18,10 +18,9 @@ import vertexai
 from vertexai.preview.generative_models import GenerativeModel, Part
 import vertexai.preview.generative_models as generative_models
 import riva.client
-import numpy as np
 import sounddevice as sd
 
-from chat_interfaces.msg import Chat
+from chat_interfaces.msg import Chat,SaySomething
 from embeddings.srv import GetEmb
 from rclpy.executors import MultiThreadedExecutor
 
@@ -31,7 +30,8 @@ import time
 import json
 import spacy
 import queue
-import traceback
+import re
+import string
 
 
 class RivaASR_Subscriber(Node):
@@ -44,6 +44,7 @@ class RivaASR_Subscriber(Node):
             self.listener_callback,
             10)
         self.declare_parameter('sound_device',"Sound BlasterX G1: USB Audio (hw:0,0)")
+        self.declare_parameter('robot_names',["Schimmel", "Schimmy","Shimmy"])
         self.subscription  # prevent unused variable warning
         auth = riva.client.Auth(
             uri="localhost:50051",  # Replace with your Riva server address
@@ -51,6 +52,7 @@ class RivaASR_Subscriber(Node):
         self.tts_service = riva.client.SpeechSynthesisService(auth)
         vertexai.init(project="lemmingsinthewind", location="us-central1")
         model = GenerativeModel("gemini-1.5-pro-preview-0215")
+        self.robot_names = self.get_parameter("robot_names").value
         self.chat = model.start_chat()
         self.config = {
             "max_output_tokens": 1024
@@ -67,14 +69,15 @@ During our conversation keep the following in mind:
 * Do not use markdown format in your responses during our conversation.    * Keep the dialog conversational.
 
 You have the following skills:
-* snap-photos = take pictures of scenes
-* people-voice = remember people by their voices
-* people-faces = remember people by their faces
-* lively-convo = have lively and informative conversations about general topics
-* explain-skills = explain the above skills that you have but to not use the short name in your explanation.
+* snapphotos = take pictures of scenes
+* time = get the current time and date
+* peoplevoice = remember people by their voices
+* peoplefaces = remember people by their faces
+* livelyconvo = have lively and informative conversations about general topics
+* explainskills = explain the above skills that you have but to not use the short name in your explanation.
 
-Your responses should be conversational. At the end of each response include the following
-### Skill Used: the short name for the skill used ###
+Your responses should be conversational. At the beginning of each response include the following
+### Skill Used: the short name for the skill used
 
 """, 
                                generation_config=self.config, safety_settings=self.safety_settings)
@@ -89,13 +92,46 @@ Your responses should be conversational. At the end of each response include the
         if device is not None:
             sd.default.device = device["name"]
         self.sample_rate_hz = 44100
+        self.srv = self.create_service(SaySomething, 'say_something', self.say_something)
         self.cli = self.create_client(GetEmb, 'get_emb')
+        
         while not self.cli.wait_for_service(timeout_sec=1.0):
             self.get_logger().info('service not available, waiting again...')
         self.q = queue.Queue()
         
         t = threading.Thread(target=self.tworker)
         t.start()
+    
+    def say_something(self, request, response):
+        responses = self.chat.send_message(request.text,
+            generation_config=self.config,stream=True, safety_settings=self.safety_settings)
+        
+        for response in responses:
+            self.q.put(response.text)
+            self.get_logger().info(response.text)
+        return response
+        
+    def check(self,sentence, words):
+        self.get_logger().info(sentence)
+        """
+        Check if an array of words are in a sentence.
+
+        Args:
+            sentence: The sentence to check.
+            words: The array of words to check.
+
+        Returns:
+            True if all of the words in the array are in the sentence, False otherwise.
+        """
+        sentence = sentence.translate(str.maketrans('', '', string.punctuation)).lower()
+
+        # Check if all of the words in the array are in the sentence.
+        for word in words:
+            if word.lower() in sentence:
+                return True
+
+        # If all of the words in the array are in the sentence, return True.
+        return False
     
     
     def tworker(self):
@@ -171,11 +207,12 @@ Your responses should be conversational. At the end of each response include the
 
     def listener_callback(self, msg):
         self.get_logger().info('I heard: "%s"' % msg.chat_text)
-        emb_req = GetEmb.Request()
-        emb_req.k = 1
-        emb_req.embedding = msg.embedding
-        future = self.cli.call_async(emb_req)
-        threading.Thread(target=read_input, args=[future,self,msg]).start()
+        if self.check(msg.chat_text,self.robot_names):
+            emb_req = GetEmb.Request()
+            emb_req.k = 1
+            emb_req.embedding = msg.embedding
+            future = self.cli.call_async(emb_req)
+            threading.Thread(target=read_input, args=[future,self,msg]).start()
 
 sound_q = queue.Queue()
                     
@@ -212,36 +249,31 @@ def split_array_into_chunks(array, max_length):
   return chunks
 
 
-def extract_skill(text):
-  """Extracts the skill used from a text string.
+def extract_skill(response_text):
+  """Extracts the skill used from a response string.
 
   Args:
-    text: The text string containing the skill information.
+    response_text: The text of the response.
 
   Returns:
-    The extracted skill as a string, or None if not found.
+    The skill used, or None if no skill was found.
   """
-  skill_start = text.lower().find("### skill used:")
-  if skill_start != -1:
-    skill_end = text.find("\n", skill_start)
-    return text[skill_start + 15: skill_end].strip()
+  match = re.search(r"### Skill Used: (\w+)", response_text)
+  if match:
+    return match.group(1)
   else:
     return None
 
-def remove_skill_info(text):
-  """Removes the "### Skill Used:" section and everything after from the text.
+def remove_skill_info(response_text):
+  """Removes the skill used information and surrounding syntax from a response.
 
   Args:
-    text: The text string potentially containing skill information.
+    response_text: The text of the response.
 
   Returns:
-    The text string with the skill information removed.
+    The response text with the skill information removed.
   """
-  skill_start = text.lower().find("### skill used:")
-  if skill_start != -1:
-    return text[:skill_start]  # Return only the text before the skill info
-  else:
-    return text  # Return the original text if no skill info is found        
+  return re.sub(r"### Skill Used: \w+", "", response_text)
 
 def read_input(future, obj,msg):
     while not future.done():

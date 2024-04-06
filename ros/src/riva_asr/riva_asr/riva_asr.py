@@ -5,17 +5,14 @@ import riva.client
 import riva.client.audio_io
 
 
-import string
-
 import queue
 import threading
 
-from grpc._channel import _MultiThreadedRendezvous
 
 import riva.client.proto.riva_asr_pb2 as rasr
 import riva.client.proto.riva_asr_pb2_grpc as rasr_srv
 from riva.client.auth import Auth
-from typing import Dict, Generator, Iterable, List, Optional, TextIO, Union
+from typing import Dict, Generator, Iterable, List
 import librosa
 import torch
 from transformers import Wav2Vec2ForSequenceClassification,Wav2Vec2FeatureExtractor
@@ -75,7 +72,7 @@ class RivaASRPublisher(Node):
             try:
                 ro = self.q.get(block=True, timeout=self.delay)
                 if ro is not None:
-                    if len(resp_text) == 0 and self.check(ro["chat"],self.boosted_lm_words):
+                    if len(resp_text) == 0:
                         resp_text = ro["chat"]
                         emb = ro["embedding"]
                     elif len(resp_text) > 0:
@@ -91,27 +88,7 @@ class RivaASRPublisher(Node):
                     resp_text = ""
                     emb = []
     
-    def check(self,sentence, words):
-        self.get_logger().info(sentence)
-        """
-        Check if an array of words are in a sentence.
-
-        Args:
-            sentence: The sentence to check.
-            words: The array of words to check.
-
-        Returns:
-            True if all of the words in the array are in the sentence, False otherwise.
-        """
-        sentence = sentence.translate(str.maketrans('', '', string.punctuation)).lower()
-
-        # Check if all of the words in the array are in the sentence.
-        for word in words:
-            if word.lower() in sentence:
-                return True
-
-        # If all of the words in the array are in the sentence, return True.
-        return False
+    
             
     def start_streaming(self):
         with riva.client.audio_io.MicrophoneStream(
