@@ -1,8 +1,14 @@
 {
     "python.autoComplete.extraPaths": [
-      "/home/nvidia/ros2_humble/src/ros2/rclpy/rclpy"
+      "/home/nvidia/ros2_humble/src/ros2/rclpy/rclpy",
+      "/home/nvidia/ros2_humble/install/cv_bridge/lib/python3.8/site-packages/",
+      "/home/nvidia/ros2_humble/install/sensor_msgs/lib/python3.8/site-packages/",
+      "/home/nvidia/ros2_humble/install/launch_ros/lib/python3.8/site-packages/"
     ],
     "python.analysis.extraPaths": [
-      "/home/nvidia/ros2_humble/src/ros2/rclpy/rclpy"
+      "/home/nvidia/ros2_humble/src/ros2/rclpy/rclpy",
+      "/home/nvidia/ros2_humble/install/cv_bridge/lib/python3.8/site-packages/",
+      "/home/nvidia/ros2_humble/install/sensor_msgs/lib/python3.8/site-packages/",
+      "/home/nvidia/ros2_humble/install/launch_ros/lib/python3.8/site-packages/"
     ]
   }

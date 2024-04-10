@@ -14,7 +14,7 @@ RUN apt-get purge -y '*opencv*' && \
 	apt install -y vim wget alsa-base \
         alsa-utils \
         libsndfile1-dev \
-		libopenblas-dev libportaudio2 portaudio19-dev
+		libopenblas-dev libportaudio2 portaudio19-dev zstd
 
 COPY requirements.txt .
 RUN python3 -m pip install --upgrade pip && \

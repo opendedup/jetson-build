@@ -2,3 +2,4 @@ float32[] embedding
 int8 k
 ---
 EmbResult[] embeddings
+float32[] embedding

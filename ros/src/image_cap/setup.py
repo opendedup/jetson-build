@@ -1,11 +1,11 @@
 from setuptools import find_packages, setup
 
-package_name = 'riva_asr'
+package_name = 'image_cap'
 
 setup(
     name=package_name,
     version='0.0.0',
-    packages=[package_name, package_name + "/services",package_name + "/skills"],
+    packages=find_packages(exclude=['test']),
     data_files=[
         ('share/ament_index/resource_index/packages',
             ['resource/' + package_name]),
@@ -20,8 +20,8 @@ setup(
     tests_require=['pytest'],
     entry_points={
         'console_scripts': [
-            'riva_asr = riva_asr.riva_asr:main',
-            'listener = riva_asr.asr_subscriber:main'
+            'service = image_cap.image_processing:main',
+            'client = image_cap.image_client:main'
         ],
     },
 )

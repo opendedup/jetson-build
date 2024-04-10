@@ -15,13 +15,17 @@
 import rclpy
 from rclpy.node import Node
 import vertexai
-from vertexai.preview.generative_models import GenerativeModel, Part
-import vertexai.preview.generative_models as generative_models
+from vertexai.generative_models import (
+    GenerativeModel,
+    Part,
+)
+import vertexai.generative_models as generative_models
 import riva.client
 import sounddevice as sd
 
-from chat_interfaces.msg import Chat,SaySomething
+from chat_interfaces.msg import Chat
 from embeddings.srv import GetEmb
+from embeddings.msg import Emb
 from rclpy.executors import MultiThreadedExecutor
 
 import queue
@@ -30,9 +34,17 @@ import time
 import json
 import spacy
 import queue
-import re
 import string
+from datetime import datetime
 
+
+from .skills.tools import robot_tools,get_current_time,get_weather,convert_string_array_to_float_array
+from .skills.image_client import ImageClientAsync
+
+import io
+import PIL.Image as Image
+from cv_bridge import CvBridge, CvBridgeError
+import numpy as np
 
 class RivaASR_Subscriber(Node):
 
@@ -51,34 +63,25 @@ class RivaASR_Subscriber(Node):
         )
         self.tts_service = riva.client.SpeechSynthesisService(auth)
         vertexai.init(project="lemmingsinthewind", location="us-central1")
-        model = GenerativeModel("gemini-1.5-pro-preview-0215")
+        model = GenerativeModel("gemini-1.5-pro-preview-0409",tools=[robot_tools])
         self.robot_names = self.get_parameter("robot_names").value
         self.chat = model.start_chat()
         self.config = {
-            "max_output_tokens": 1024
+            "max_output_tokens": 1024,
+            "temperature": 0.0,
         }
+        
+
         self.safety_settings = {
             generative_models.HarmCategory.HARM_CATEGORY_HATE_SPEECH: generative_models.HarmBlockThreshold.BLOCK_ONLY_HIGH,
             generative_models.HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT: generative_models.HarmBlockThreshold.BLOCK_ONLY_HIGH,
             generative_models.HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT: generative_models.HarmBlockThreshold.BLOCK_ONLY_HIGH,
             generative_models.HarmCategory.HARM_CATEGORY_HARASSMENT: generative_models.HarmBlockThreshold.BLOCK_ONLY_HIGH,
         }
-        self.chat.send_message("""Your name is Shimmy, which is short for Shimmel or Schimmel.Your are humorous and have a dry wit. You love helping people and making them laugh. Today is Wednesday April 3rd 2024 at 20:02:11.
-During our conversation keep the following in mind: 
-
-* Do not use markdown format in your responses during our conversation.    * Keep the dialog conversational.
-
-You have the following skills:
-* snapphotos = take pictures of scenes
-* time = get the current time and date
-* peoplevoice = remember people by their voices
-* peoplefaces = remember people by their faces
-* livelyconvo = have lively and informative conversations about general topics
-* explainskills = explain the above skills that you have but to not use the short name in your explanation.
-
-Your responses should be conversational. At the beginning of each response include the following
-### Skill Used: the short name for the skill used
-
+        self.chat.send_message("""Your name is Shimmy, which is short for Shimmel or Schimmel.You are super funny.
+Some Facts about you can use in context when answering questions:
+    * You live with a family of 6 people.
+    * You live in a house in Portland Oregon. This can be helpful when answering questions about weather and time.
 """, 
                                generation_config=self.config, safety_settings=self.safety_settings)
         devices = sd.query_devices()
@@ -92,24 +95,21 @@ Your responses should be conversational. At the beginning of each response inclu
         if device is not None:
             sd.default.device = device["name"]
         self.sample_rate_hz = 44100
-        self.srv = self.create_service(SaySomething, 'say_something', self.say_something)
         self.cli = self.create_client(GetEmb, 'get_emb')
         
         while not self.cli.wait_for_service(timeout_sec=1.0):
             self.get_logger().info('service not available, waiting again...')
         self.q = queue.Queue()
-        
+        self.emb_publisher = self.create_publisher(Emb, 'embeddings', 10)
         t = threading.Thread(target=self.tworker)
         t.start()
-    
-    def say_something(self, request, response):
-        responses = self.chat.send_message(request.text,
-            generation_config=self.config,stream=True, safety_settings=self.safety_settings)
         
-        for response in responses:
-            self.q.put(response.text)
-            self.get_logger().info(response.text)
-        return response
+    def add_voice_callback(self,name,embedding):
+            msg = Emb()
+            msg.metadata = json.dumps({"name":name})
+            msg.embedding = embedding
+            self.emb_publisher.publish(msg)
+            self.get_logger().info('Publishing: "%s"' % msg.metadata)
         
     def check(self,sentence, words):
         self.get_logger().info(sentence)
@@ -149,9 +149,6 @@ Your responses should be conversational. At the beginning of each response inclu
                     if txt is not None:
                         resp_text += txt
                     if len(resp_text) > 50:
-                        skill = extract_skill(resp_text)
-                        self.get_logger().info(f"#############{skill}")
-                        resp_text = remove_skill_info(resp_text)
                         doc = nlp(resp_text)
                         sentences = [sent.text for sent in doc.sents][:-1]
                         resp_text = [sent.text for sent in doc.sents][-1]
@@ -178,9 +175,6 @@ Your responses should be conversational. At the beginning of each response inclu
                         
                 except queue.Empty:
                     if len(resp_text) > 0:
-                        skill = extract_skill(resp_text)
-                        self.get_logger().info(f"#############{skill}")
-                        resp_text = remove_skill_info(resp_text)
                         doc = nlp(resp_text)
                         sentences = [sent.text for sent in doc.sents]
                         if len(sentences) > 0:
@@ -202,7 +196,6 @@ Your responses should be conversational. At the beginning of each response inclu
                             except Exception as error:
                                 self.get_logger().error(error.message)
                         
-    
     
 
     def listener_callback(self, msg):
@@ -249,32 +242,6 @@ def split_array_into_chunks(array, max_length):
   return chunks
 
 
-def extract_skill(response_text):
-  """Extracts the skill used from a response string.
-
-  Args:
-    response_text: The text of the response.
-
-  Returns:
-    The skill used, or None if no skill was found.
-  """
-  match = re.search(r"### Skill Used: (\w+)", response_text)
-  if match:
-    return match.group(1)
-  else:
-    return None
-
-def remove_skill_info(response_text):
-  """Removes the skill used information and surrounding syntax from a response.
-
-  Args:
-    response_text: The text of the response.
-
-  Returns:
-    The response text with the skill information removed.
-  """
-  return re.sub(r"### Skill Used: \w+", "", response_text)
-
 def read_input(future, obj,msg):
     while not future.done():
         time.sleep(0.05)
@@ -290,11 +257,63 @@ def read_input(future, obj,msg):
             if not person.startswith("robo"):
                 responses = obj.chat.send_message(msg.chat_text,
                                            generation_config=obj.config,stream=True, safety_settings=obj.safety_settings)
-        
+                api_part = None
+                data_part = None
                 for response in responses:
-                    obj.q.put(response.text)
-                    obj.get_logger().info(response.text)
-    
+                    print(response)
+                    if response.candidates[0].content.parts[0].function_call.name == "get_weather":
+                        coords =response.candidates[0].content.parts[0].function_call.args["coords"].split(",")
+                        coords = convert_string_array_to_float_array(coords)
+                        api_part = get_weather(coords)
+                    elif response.candidates[0].content.parts[0].function_call.name == "get_time":
+                        time_zone =response.candidates[0].content.parts[0].function_call.args["time_zone"]
+                        api_part = get_current_time(time_zone)
+                    elif response.candidates[0].content.parts[0].function_call.name == "store_voice":
+                        person =response.candidates[0].content.parts[0].function_call.args["name"]
+                        obj.add_voice_callback(person,future.result().embedding)
+                        api_part = Part.from_function_response(
+                            name="get_time",
+                            response={
+                                "content": {"user_name":person},
+                            },
+                        )
+                    elif response.candidates[0].content.parts[0].function_call.name == "take_picture":
+                        api_part = Part.from_function_response(
+                            name="get_time",
+                            response={
+                                "content": {"message":"image will be sent in next message"},
+                            },
+                        )
+                        minimal_client = ImageClientAsync()
+                        response = minimal_client.send_request()
+                        cv_image = CvBridge().imgmsg_to_cv2(response.image, "rgb8")
+                        img_array = np.array(cv_image)
+                        img_pil = Image.fromarray(img_array)
+                        buffered = io.BytesIO()
+                        base_width= 720
+                        wpercent = (base_width / float(img_pil.size[0]))
+                        hsize = int((float(img_pil.size[1]) * float(wpercent)))
+                        img_pil = img_pil.resize((base_width, hsize), Image.Resampling.LANCZOS)
+                        img_pil.save(buffered, format="JPEG")
+                        data_part = Part.from_data(data=buffered.getvalue(),mime_type="image/jpeg")
+                    else:
+                        obj.q.put(response.candidates[0].content.parts[0].text)
+                        obj.get_logger().info(response.candidates[0].content.parts[0].text)
+                if api_part != None:
+                    
+                    responses = obj.chat.send_message(
+                            api_part,generation_config=obj.config,stream=True, safety_settings=obj.safety_settings
+                    )
+                    if data_part is not None:
+                        responses = obj.chat.send_message(
+                            [data_part],stream=True
+                        )
+                    for response in responses:
+                        print(response)
+                        obj.q.put(response.candidates[0].content.parts[0].text)
+                        obj.get_logger().info(response.candidates[0].content.parts[0].text)
+
+
     
 
 def main(args=None):

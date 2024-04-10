@@ -70,12 +70,11 @@ class EmbeddingService(Node):
     def addemb_callback(self, msg: Emb):
         self.get_logger().info('I got a message')
         kb = json.loads(msg.metadata)
-        kb["key"] = msg.key
-        kb["value"] = [msg.embedding]
+        mm = np.array([msg.embedding]).astype(np.float32).tolist()
+        kb["value"] = mm
         
-        with self.lock():
+        with self.lock:
             self.json_writer.write(kb)
-            self.index.add()
             ar = np.array(kb["value"]).astype(np.float32)
             faiss.normalize_L2(ar)
             self.index.add(ar)
@@ -90,10 +89,12 @@ class EmbeddingService(Node):
         ids = _ids.tolist()[0]
         distances = _d.tolist()[0]
         response.embeddings = []
+        response.embedding = request.embedding
         for index, item in enumerate(ids):
             emb = EmbResult()
             emb.distance = float(distances[index])
             emb.metadata = self.db[f"key{item}"]
+            
             response.embeddings.append(emb)
             self.get_logger().info('Loaded %s items' % (emb.metadata))
         self.get_logger().info('done')
