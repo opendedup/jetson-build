@@ -24,27 +24,18 @@ import riva.client
 import sounddevice as sd
 
 from chat_interfaces.msg import Chat
-from embeddings.srv import GetEmb
-from embeddings.msg import Emb
 from rclpy.executors import MultiThreadedExecutor
 
 import queue
 import threading
-import time
 import json
 import spacy
 import queue
 import string
-from datetime import datetime
 
 
-from .skills.tools import robot_tools,get_current_time,get_weather,convert_string_array_to_float_array
-from .skills.image_client import ImageClientAsync
+from .skills.agents import robot_agents,AgentRunner
 
-import io
-import PIL.Image as Image
-from cv_bridge import CvBridge, CvBridgeError
-import numpy as np
 
 class RivaASR_Subscriber(Node):
 
@@ -63,7 +54,7 @@ class RivaASR_Subscriber(Node):
         )
         self.tts_service = riva.client.SpeechSynthesisService(auth)
         vertexai.init(project="lemmingsinthewind", location="us-central1")
-        model = GenerativeModel("gemini-1.5-pro-preview-0409",tools=[robot_tools])
+        model = GenerativeModel("gemini-1.5-pro-preview-0409",tools=[robot_agents])
         self.robot_names = self.get_parameter("robot_names").value
         self.chat = model.start_chat()
         self.config = {
@@ -78,38 +69,30 @@ class RivaASR_Subscriber(Node):
             generative_models.HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT: generative_models.HarmBlockThreshold.BLOCK_ONLY_HIGH,
             generative_models.HarmCategory.HARM_CATEGORY_HARASSMENT: generative_models.HarmBlockThreshold.BLOCK_ONLY_HIGH,
         }
-        self.chat.send_message("""Your name is Shimmy, which is short for Shimmel or Schimmel.You are super funny.
+        self.chat.send_message("""Your name is Shimmy, which is short for Shimmel or Schimmel.
 Some Facts about you can use in context when answering questions:
     * You live with a family of 6 people.
     * You live in a house in Portland Oregon. This can be helpful when answering questions about weather and time.
+
 """, 
                                generation_config=self.config, safety_settings=self.safety_settings)
         devices = sd.query_devices()
         # Find the device that we want to use.
         device = None
         for d in devices:
-            #print(d)
-            if d["name"] == self.get_parameter("sound_device").value:
+            print(d["name"])
+            if d["name"].startswith(self.get_parameter("sound_device").value):
                 device = d
                 break
         if device is not None:
             sd.default.device = device["name"]
         self.sample_rate_hz = 44100
-        self.cli = self.create_client(GetEmb, 'get_emb')
         
-        while not self.cli.wait_for_service(timeout_sec=1.0):
-            self.get_logger().info('service not available, waiting again...')
         self.q = queue.Queue()
-        self.emb_publisher = self.create_publisher(Emb, 'embeddings', 10)
+        self.robot_runner = AgentRunner()
         t = threading.Thread(target=self.tworker)
         t.start()
         
-    def add_voice_callback(self,name,embedding):
-            msg = Emb()
-            msg.metadata = json.dumps({"name":name})
-            msg.embedding = embedding
-            self.emb_publisher.publish(msg)
-            self.get_logger().info('Publishing: "%s"' % msg.metadata)
         
     def check(self,sentence, words):
         self.get_logger().info(sentence)
@@ -133,7 +116,66 @@ Some Facts about you can use in context when answering questions:
         # If all of the words in the array are in the sentence, return True.
         return False
     
-    
+    def read_input(self,msg):
+        result = self.robot_runner.voice_emb_client.send_request(msg.embedding)
+        #while not future.done():
+        #    time.sleep(0.05)
+        self.get_logger().info(result.embeddings[0].metadata)
+        if len(result.embeddings) > 0:
+            emb = result.embeddings[0]
+            metadata = json.loads(emb.metadata)
+            person  = metadata["name"]
+            distance = emb.distance
+            if distance < 1500 and person.startswith("robo"):
+                self.get_logger().info("Ignoring %s match is %d" %(person,distance))
+            else:
+                if distance > 1500:
+                    self.get_logger().info(str(distance))
+                    person = "unknown"
+                self.get_logger().info(person)
+                responses = self.chat.send_message(f"{person} - \"{msg.chat_text}\"",
+                                        generation_config=self.config,stream=True, safety_settings=self.safety_settings)
+                
+                while responses is not None:
+                    api_part = None
+                    data_part = None
+                    for response in responses:
+                        self.get_logger().info("CMD = %s" %(response.candidates[0].content.parts[0].function_call.name))
+                        if response.candidates[0].content.parts[0].function_call.name == "get_weather":
+                            coords =response.candidates[0].content.parts[0].function_call.args["coords"].split(",")
+                            api_part = self.robot_runner.get_weather(coords)
+                        elif response.candidates[0].content.parts[0].function_call.name == "get_time":
+                            time_zone =response.candidates[0].content.parts[0].function_call.args["time_zone"]
+                            api_part = self.robot_runner.get_current_time(time_zone)
+                        elif response.candidates[0].content.parts[0].function_call.name == "store_voice":
+                            person =response.candidates[0].content.parts[0].function_call.args["name"]
+                            api_part = self.robot_runner.add_voice(person,result.embedding)
+                        elif response.candidates[0].content.parts[0].function_call.name == "take_picture":
+                            api_part = Part.from_function_response(
+                                name="get_time",
+                                response={
+                                    "content": {"message":"image will be sent in next message"},
+                                },
+                            )
+                            data_part = self.robot_runner.get_image()
+                        elif response.candidates[0].content.parts[0].function_call.name == "remember_image_objects":
+                            api_part = self.robot_runner.remember_image_objects(response.candidates[0].content.parts[0].function_call.args["picture_context"])
+                        else:
+                            self.q.put(response.candidates[0].content.parts[0].text)
+                            self.get_logger().info(response.candidates[0].content.parts[0].text)
+                            
+                    if api_part != None:
+                        responses = self.chat.send_message(
+                                api_part,generation_config=self.config,stream=True, safety_settings=self.safety_settings
+                        )
+                        if data_part is not None:
+                            responses = self.chat.send_message(
+                                data_part,stream=True,generation_config=self.config,safety_settings=self.safety_settings
+                            )
+                    else:
+                        responses = None
+                            
+                        
     def tworker(self):
         resp_text = ""
         nlp = spacy.load("en_core_web_sm")
@@ -168,7 +210,7 @@ Some Facts about you can use in context when answering questions:
                                 dtr = split_array_into_chunks(resp.audio,block_size*2)
                                 for dt in dtr:
                                     sound_q.put(dt)  # Pre-fill queue
-                                self.get_logger().info(talk_text)
+                                self.get_logger().info(f"saying {talk_text}")
                             except Exception as error:
                                 self.get_logger().error(error.message)
                             
@@ -191,7 +233,7 @@ Some Facts about you can use in context when answering questions:
                                 dtr = split_array_into_chunks(resp.audio,block_size*2)
                                 for dt in dtr:
                                     sound_q.put(dt)  # Pre-fill queue
-                                self.get_logger().info(talk_text)
+                                self.get_logger().info(f"saying {talk_text}")
                                 resp_text = ""
                             except Exception as error:
                                 self.get_logger().error(error.message)
@@ -201,11 +243,7 @@ Some Facts about you can use in context when answering questions:
     def listener_callback(self, msg):
         self.get_logger().info('I heard: "%s"' % msg.chat_text)
         if self.check(msg.chat_text,self.robot_names):
-            emb_req = GetEmb.Request()
-            emb_req.k = 1
-            emb_req.embedding = msg.embedding
-            future = self.cli.call_async(emb_req)
-            threading.Thread(target=read_input, args=[future,self,msg]).start()
+            threading.Thread(target=self.read_input, args=[msg]).start()
 
 sound_q = queue.Queue()
                     
@@ -242,76 +280,7 @@ def split_array_into_chunks(array, max_length):
   return chunks
 
 
-def read_input(future, obj,msg):
-    while not future.done():
-        time.sleep(0.05)
-    obj.get_logger().info(future.result().embeddings[0].metadata)
-    if len(future.result().embeddings) > 0:
-        emb = future.result().embeddings[0]
-        metadata = json.loads(emb.metadata)
-        person  = metadata["name"]
-        distance = emb.distance
-        if distance < 1000 and person.startswith("robo"):
-            obj.get_logger().info("Ignoring %s match is %d" %(person,distance))
-        else:
-            if not person.startswith("robo"):
-                responses = obj.chat.send_message(msg.chat_text,
-                                           generation_config=obj.config,stream=True, safety_settings=obj.safety_settings)
-                api_part = None
-                data_part = None
-                for response in responses:
-                    print(response)
-                    if response.candidates[0].content.parts[0].function_call.name == "get_weather":
-                        coords =response.candidates[0].content.parts[0].function_call.args["coords"].split(",")
-                        coords = convert_string_array_to_float_array(coords)
-                        api_part = get_weather(coords)
-                    elif response.candidates[0].content.parts[0].function_call.name == "get_time":
-                        time_zone =response.candidates[0].content.parts[0].function_call.args["time_zone"]
-                        api_part = get_current_time(time_zone)
-                    elif response.candidates[0].content.parts[0].function_call.name == "store_voice":
-                        person =response.candidates[0].content.parts[0].function_call.args["name"]
-                        obj.add_voice_callback(person,future.result().embedding)
-                        api_part = Part.from_function_response(
-                            name="get_time",
-                            response={
-                                "content": {"user_name":person},
-                            },
-                        )
-                    elif response.candidates[0].content.parts[0].function_call.name == "take_picture":
-                        api_part = Part.from_function_response(
-                            name="get_time",
-                            response={
-                                "content": {"message":"image will be sent in next message"},
-                            },
-                        )
-                        minimal_client = ImageClientAsync()
-                        response = minimal_client.send_request()
-                        cv_image = CvBridge().imgmsg_to_cv2(response.image, "rgb8")
-                        img_array = np.array(cv_image)
-                        img_pil = Image.fromarray(img_array)
-                        buffered = io.BytesIO()
-                        base_width= 720
-                        wpercent = (base_width / float(img_pil.size[0]))
-                        hsize = int((float(img_pil.size[1]) * float(wpercent)))
-                        img_pil = img_pil.resize((base_width, hsize), Image.Resampling.LANCZOS)
-                        img_pil.save(buffered, format="JPEG")
-                        data_part = Part.from_data(data=buffered.getvalue(),mime_type="image/jpeg")
-                    else:
-                        obj.q.put(response.candidates[0].content.parts[0].text)
-                        obj.get_logger().info(response.candidates[0].content.parts[0].text)
-                if api_part != None:
-                    
-                    responses = obj.chat.send_message(
-                            api_part,generation_config=obj.config,stream=True, safety_settings=obj.safety_settings
-                    )
-                    if data_part is not None:
-                        responses = obj.chat.send_message(
-                            [data_part],stream=True
-                        )
-                    for response in responses:
-                        print(response)
-                        obj.q.put(response.candidates[0].content.parts[0].text)
-                        obj.get_logger().info(response.candidates[0].content.parts[0].text)
+
 
 
     

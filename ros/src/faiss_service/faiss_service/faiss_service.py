@@ -21,25 +21,20 @@ class EmbeddingService(Node):
 
     def __init__(self):
         super().__init__('embedding_service')
-        self.declare_parameter('channel', 'embeddings')
         self.declare_parameter('dimensions', 768)
-        self.declare_parameter('fixed_embeddings','/opt/ros2/embeddings')
-        self.declare_parameter('sqlpath','/opt/ros2/embeddings/db')
+        self.declare_parameter('embeddings_path','/opt/ros2/embeddings')
         self.dimensions = self.get_parameter("dimensions").value
         self.get_logger().info('Emb Dimensions = %d'% (self.dimensions))
         nbits = self.dimensions*4
-        self.channel = self.get_parameter("channel").value
-        
-        
         self.lock = threading.Lock()
         self.increment = 0
         self.index = faiss.IndexLSH(self.dimensions,nbits)  # build the index
-        dbpath = os.path.join(self.get_parameter("sqlpath").value, f"{self.channel}.sqlite")
-        jsonpath = os.path.join(self.get_parameter("fixed_embeddings").value,f"{self.channel}.jsonl")
-        if not os.path.exists(self.get_parameter("fixed_embeddings").value):
-            os.makedirs(self.get_parameter("fixed_embeddings").value)
-        if not os.path.exists(self.get_parameter("sqlpath").value):
-            os.makedirs(self.get_parameter("sqlpath").value)
+        dbpath = os.path.join(self.get_parameter("embeddings_path").value,"db", f"embeddings.sqlite")
+        jsonpath = os.path.join(self.get_parameter("embeddings_path").value,f"embeddings.jsonl")
+        if not os.path.exists(self.get_parameter("embeddings_path").value):
+            os.makedirs(self.get_parameter("embeddings_path").value)
+        if not os.path.exists(os.path.join(self.get_parameter("embeddings_path").value,"db")):
+            os.makedirs(os.path.join(self.get_parameter("embeddings_path").value,"db"))
         self.db = SqliteDict(dbpath, autocommit=True,journal_mode="OFF")
         self.db.clear()
         if os.path.exists(jsonpath):
@@ -59,7 +54,7 @@ class EmbeddingService(Node):
         self.srv = self.create_service(GetEmb, 'get_emb', self.get_emb)
         self.subscription = self.create_subscription(
             Emb,
-            self.channel,
+            'embeddings',
             self.addemb_callback,
             10)
         self.subscription
@@ -68,7 +63,6 @@ class EmbeddingService(Node):
         
 
     def addemb_callback(self, msg: Emb):
-        self.get_logger().info('I got a message')
         kb = json.loads(msg.metadata)
         mm = np.array([msg.embedding]).astype(np.float32).tolist()
         kb["value"] = mm

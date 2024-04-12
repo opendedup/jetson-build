@@ -1,12 +1,10 @@
-import sys
+
 
 from chat_interfaces.srv import GetImage
 import rclpy
 from rclpy.node import Node
-import os
-import io
 import PIL.Image as Image
-from cv_bridge import CvBridge, CvBridgeError
+from cv_bridge import CvBridge
 import numpy as np
 
 class ImageClientAsync(Node):

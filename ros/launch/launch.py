@@ -5,9 +5,20 @@ def generate_launch_description():
     return LaunchDescription([
         Node(
             package='faiss_service',
+            name="voice_emb",
             executable='service',
             parameters=[
                 {"dimensions": 1251}
+            ]
+        ),
+        Node(
+            package='faiss_service',
+            executable='service',
+            name="img_emb",
+            namespace='images',
+            parameters=[
+                {"dimensions": 1408,
+                 "embeddings_path":"/opt/ros2/mmembeddings/"}
             ]
         ),
         Node(
@@ -22,16 +33,9 @@ def generate_launch_description():
             executable='listener',
             name='asr_listener',
             parameters=[
-                {"device_number": "iFi (by AMR) HD USB Audio (hw:0,0)"}
+                {"sound_device": "iFi (by AMR) HD USB Audio"}
             ]
             
-        ),
-        Node(
-            package='usb_cam',
-            executable='usb_cam_node_exe',
-            parameters=[
-                {"params-file": "usb_cam/params.yaml"}
-            ]
         ),
         Node(
             package='image_cap',
