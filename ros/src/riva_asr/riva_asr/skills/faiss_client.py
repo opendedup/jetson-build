@@ -26,7 +26,7 @@ class FaissClientAsync(Node):
     def publish_embedding(self,name,embedding,map={}):
             msg = Emb()
             map["name"] = name
-            msg.metadata = json.dumps({"name":name})
+            msg.metadata = json.dumps(map)
             msg.embedding = embedding
             self.emb_publisher.publish(msg)
             self.get_logger().info('Publishing: "%s"' % msg.metadata)

@@ -25,7 +25,8 @@ def generate_launch_description():
             package='riva_asr',
             executable='riva_asr',
             parameters=[
-                {"device_number": 0}
+                {"device_number": 1,
+                 "riva_uri": "172.17.0.3:50051"}
             ]
         ),
         Node(
@@ -33,13 +34,16 @@ def generate_launch_description():
             executable='listener',
             name='asr_listener',
             parameters=[
-                {"sound_device": "iFi (by AMR) HD USB Audio"}
+                {"sound_device": 0}
             ]
             
         ),
         Node(
             package='image_cap',
-            executable='service'
+            executable='service',
+            remappings=[
+            ('/image_raw', '/zed/zed_node/left/image_rect_color'),
+         ]
         ),
         
         

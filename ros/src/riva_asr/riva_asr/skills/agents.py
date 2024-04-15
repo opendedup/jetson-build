@@ -1,10 +1,15 @@
 from noaa_sdk import NOAA
 from datetime import datetime
-from vertexai.generative_models import (
+
+import vertexai
+
+from vertexai.preview.generative_models import (
+    grounding,
     Part,
     Tool,
-    FunctionDeclaration
+    FunctionDeclaration,
 )
+
 
 from vertexai.vision_models import (
     Image as VXImage,
@@ -31,14 +36,14 @@ class AgentRunner:
         self.image_client = ImageClientAsync()
         self.voice_emb_client = FaissClientAsync()
         self.image_emb_client = FaissClientAsync("images")
+        vertexai.init(project="lemmingsinthewind", location="us-central1")
         
         
 
-    def get_weather(self,coords):
+    def get_weather(self,lat,lon):
         try:
-            coords = convert_string_array_to_float_array(coords)
             n = NOAA()
-            fcs = n.points_forecast(coords[0],coords[1],hourly=False, type='forecast')['properties']['periods']
+            fcs = n.points_forecast(lat,lon,hourly=False, type='forecast')['properties']['periods']
             now = datetime.now()
             date_time = now.strftime("%m/%d/%Y, %H:%M:%S")
             local_now = now.astimezone()
@@ -105,7 +110,7 @@ class AgentRunner:
             )
             img_data = base64.b64encode(buffered.getvalue())
             metadata = {
-                "data":img_data,
+                "data":str(img_data, 'utf-8'),
                 "mime_type":"image/jpeg",
                 "description":description
             }
@@ -197,7 +202,8 @@ get_weather_func = FunctionDeclaration(
         parameters={
             "type": "object",
             "properties": {
-                "coords": {"type": "string", "description": "The Valid latitude and longitude associated with the weather request.E.g. \"38.8894,-77.0352\" "},
+                "latitude": {"type": "number", "description": "The Valid latitude associated with the weather request.E.g. 38.8894"},
+                "longitude": {"type": "number", "description": "The Valid longitude associated with the weather request E.g. -77.0352\" "}
                 
             },
         },
@@ -239,13 +245,16 @@ store_image_func = FunctionDeclaration(
         },
 )
 
+google_search_tool = Tool.from_google_search_retrieval(
+    google_search_retrieval=grounding.GoogleSearchRetrieval(disable_attribution=False)
+)
+
 robot_agents = Tool(
         function_declarations=[
             get_time_func,
-            get_weather_func,
             store_voice_func,
             store_image_func,
-            take_picture_function
+            take_picture_function,
         ],
 )
 
