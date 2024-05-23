@@ -10,5 +10,6 @@
       "/home/nvidia/ros2_humble/install/cv_bridge/lib/python3.8/site-packages/",
       "/home/nvidia/ros2_humble/install/sensor_msgs/lib/python3.8/site-packages/",
       "/home/nvidia/ros2_humble/install/launch_ros/lib/python3.8/site-packages/"
-    ]
+    ],
+    "cmake.sourceDirectory": "/home/nvidia/git/jetson-build/ros/build/chat_interfaces/chat_interfaces__py"
   }

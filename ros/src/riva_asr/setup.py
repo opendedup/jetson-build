@@ -21,7 +21,8 @@ setup(
     entry_points={
         'console_scripts': [
             'riva_asr = riva_asr.riva_asr:main',
-            'listener = riva_asr.google_asr_subscriber:main'
+            'listener = riva_asr.google_asr_subscriber:main',
+            'walley_listener = riva_asr.walley_asr_subscriber:main'
         ],
     },
 )

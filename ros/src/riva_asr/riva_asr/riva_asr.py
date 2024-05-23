@@ -75,7 +75,7 @@ class RivaASRPublisher(Node):
                     msg.chat_text = resp_text
                     msg.embedding = emb
                     self.publisher_.publish(msg)
-                    self.get_logger().info('Publishing: "%s"' % msg.chat_text)
+                    self.get_logger().debug('Publishing: "%s"' % msg.chat_text)
                     resp_text = ""
                     emb = []
     

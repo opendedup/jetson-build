@@ -2,8 +2,8 @@
 set -e
 
 # setup ros2 environment
-source "/opt/ros/$ROS_DISTRO/install/setup.bash" --
-source "/root/ros2_ws/install/local_setup.bash" --
+source "/opt/ros/$ROS_DISTRO/install/setup.bash"
+source "/root/ros2_ws/install/setup.bash"
 
 # Welcome information
 echo "ZED ROS2 Docker Image"
@@ -13,5 +13,6 @@ echo 'DDS middleware: ' $RMW_IMPLEMENTATION
 echo "---"  
 echo 'Available ZED packages:'
 ros2 pkg list | grep zed
-echo "---------------------"    
-exec "$@"
+echo "---------------------"
+exec "ros2 launch zed_wrapper zed_camera.launch.py camera_model:=zed2 &"    
+exec "ros2 launch foxglove_bridge foxglove_bridge_launch.xml"

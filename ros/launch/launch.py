@@ -31,7 +31,7 @@ def generate_launch_description():
         ),
         Node(
             package='riva_asr',
-            executable='listener',
+            executable='walley_listener',
             name='asr_listener',
             parameters=[
                 {"sound_device": 0}
