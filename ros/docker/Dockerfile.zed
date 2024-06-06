@@ -1,10 +1,10 @@
-FROM us-central1-docker.pkg.dev/lemmingsinthewind/ros2/ros2base:0.1
+FROM us-central1-docker.pkg.dev/lemmingsinthewind/ros2/ros2base:0.2
 
 ARG ZED_SDK_MAJOR=4
 ARG ZED_SDK_MINOR=1
 ARG JETPACK_MAJOR=5
-ARG L4T_MAJOR=35
-ARG L4T_MINOR=4
+ARG L4T_MAJOR=36
+ARG L4T_MINOR=3
 
 ARG ROS2_DIST=humble       # ROS2 distribution
 
@@ -18,14 +18,16 @@ ENV DEBIAN_FRONTEND noninteractive
 
 # Disable apt-get warnings
 RUN apt-key adv --keyserver keyserver.ubuntu.com --recv-keys 42D5A192B819C5DA || true && \
-  apt-get update || true && apt-get install -y --no-install-recommends apt-utils dialog && \
-  rm -rf /var/lib/apt/lists/*
+  apt-get update || true && apt-get install -y --no-install-recommends apt-utils dialog
   
 ENV TZ=America/Los_Angeles
 
-RUN ln -snf /usr/share/zoneinfo/$TZ /etc/localtime && echo $TZ > /etc/timezone && \ 
+RUN ln -snf /usr/share/zoneinfo/$TZ /etc/localtime && echo $TZ > /etc/timezone && \
+  apt remove libopencv-dev python3-opencv && \
+  apt purge -y '*opencv*' && \
   apt-get update && \
-  apt-get install --yes libgazebo11-dev pluginlib-dev screen libfmt-dev ffmpeg python3-opencv libpng-dev libopencv-dev libboost-all-dev nlohmann-json3-dev libboost-program-options-dev libssl-dev libwebsocketpp-dev  libtinyxml-dev lsb-release wget less udev sudo build-essential cmake python3 python3-dev python3-pip python3-wheel git jq libpq-dev zstd usbutils && \    
+  apt-get upgrade -y && \
+  apt-get install -y pluginlib-dev screen libfmt-dev ffmpeg liburdfdom-tools libpng-dev libboost-all-dev nlohmann-json3-dev libboost-program-options-dev libssl-dev libwebsocketpp-dev  libtinyxml-dev lsb-release wget less udev sudo build-essential cmake python3 python3-dev python3-pip python3-wheel git jq libpq-dev zstd usbutils && \    
   rm -rf /var/lib/apt/lists/*
 
 # Install the ZED SDK
@@ -44,50 +46,24 @@ RUN echo "# R${L4T_MAJOR} (release), REVISION: ${L4T_MINOR}" > /etc/nv_tegra_rel
 # Install the ZED ROS2 Wrapper
 ENV ROS_DISTRO ${ROS2_DIST}
 
-# Install the ZED ROS2 Wrapper
-WORKDIR /root/ros2_ws/src
-RUN git clone --recursive https://github.com/stereolabs/zed-ros2-wrapper.git
+RUN  curl -sSL https://raw.githubusercontent.com/ros/rosdistro/master/ros.key -o /usr/share/keyrings/ros-archive-keyring.gpg && \
+echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/ros-archive-keyring.gpg] http://packages.ros.org/ros2/ubuntu $(lsb_release -cs) main" | tee /etc/apt/sources.list.d/ros2.list > /dev/null &&\
+apt-get update && apt-get upgrade -y
 
-# Install missing dependencies
+# Install packages
 WORKDIR /root/ros2_ws/src
-RUN wget https://github.com/ros/xacro/archive/refs/tags/${XACRO_VERSION}.tar.gz -O - | tar -xvz && mv xacro-${XACRO_VERSION} xacro && \
-  wget https://github.com/ros/diagnostics/archive/refs/tags/${DIAGNOSTICS_VERSION}.tar.gz -O - | tar -xvz && mv diagnostics-${DIAGNOSTICS_VERSION} diagnostics && \
-  wget https://github.com/ament/ament_lint/archive/refs/tags/${AMENT_LINT_VERSION}.tar.gz -O - | tar -xvz && mv ament_lint-${AMENT_LINT_VERSION} ament-lint && \
-  wget https://github.com/cra-ros-pkg/robot_localization/archive/refs/tags/${ROBOT_LOCALIZATION_VERSION}.tar.gz -O - | tar -xvz && mv robot_localization-${ROBOT_LOCALIZATION_VERSION} robot-localization && \
-  wget https://github.com/ros-geographic-info/geographic_info/archive/refs/tags/${GEOGRAPHIC_INFO_VERSION}.tar.gz -O - | tar -xvz && mv geographic_info-${GEOGRAPHIC_INFO_VERSION} geographic-info && \
-  cp -r geographic-info/geographic_msgs/ . && \
-  rm -rf geographic-info && \
-  git clone -b humble https://github.com/ros/pluginlib.git && \
-  git clone https://github.com/ros-drivers/nmea_msgs.git --branch ros2 && \  
-  git clone https://github.com/ros/angles.git --branch humble-devel && \
-  git clone -b humble https://github.com/ros/robot_state_publisher.git && \
-  git clone -b humble https://github.com/ros/kdl_parser.git && \
-  git clone -b humble https://github.com/ros2/urdf.git && \
-  git clone -b humble https://github.com/ros/urdfdom_headers.git && \
-  git clone -b humble https://github.com/ros/urdfdom.git && \
-  git clone -b humble https://github.com/ros2/geometry2.git && \
-  git clone https://github.com/foxglove/ros-foxglove-bridge.git && \
-  git clone https://github.com/eProsima/WebSocket-SH.git && \
-  git clone https://github.com/eProsima/ROS2-SH.git src/ROS2-SH && \
-  git clone https://github.com/eProsima/Integration-Service.git && \
-  git clone https://github.com/ros/resource_retriever.git -b humble && \
+RUN git clone -b humble https://github.com/ros/pluginlib.git && \   
+  git clone --recursive https://github.com/stereolabs/zed-ros2-wrapper.git && \
   git clone https://github.com/odriverobotics/ros_odrive.git && \
-  git clone -b ros2 https://github.com/ros/filters.git && \
-  git clone https://github.com/PickNikRobotics/generate_parameter_library.git && \
-  git clone  https://github.com/PickNikRobotics/RSL.git && \
-  git clone https://github.com/PickNikRobotics/cpp_polyfills.git && \
-  git clone https://github.com/pal-robotics/backward_ros.git && \
-  git clone -b ros2 https://github.com/ros-simulation/gazebo_ros_pkgs.git && \
-  git clone -b humble https://github.com/ros2/tinyxml_vendor.git && \
-  git clone -b ros2 https://github.com/ros-drivers/ackermann_msgs.git && \
-  mv urdf/urdf_parser_plugin .
+  git clone -b humble https://github.com/ros-perception/vision_opencv.git && \
+  apt install -y ros-$ROS_DISTRO-foxglove-bridge
 
 WORKDIR /root/ros2_ws/
-RUN wget https://raw.githubusercontent.com/ros-controls/ros2_control_ci/master/ros_controls.$ROS_DISTRO.repos && \
-  vcs import src < ros_controls.$ROS_DISTRO.repos
-
-RUN apt-get update -y || true && apt-get upgrade -y && rosdep update && \
-  rosdep install --from-paths src --ignore-src -r -y && \
+RUN source /opt/ros/${ROS_DISTRO}/install/setup.bash && \
+  rosdep fix-permissions && \ 
+  rosdep update && \
+  rosdep install -y --from-paths src --ignore-src --rosdistro humble -r  && \
+  apt-get update &&   apt-get upgrade -y &&   apt-get install -y pluginlib-dev && \
   rm -rf /var/lib/apt/lists/*
 
 # Install cython
@@ -97,16 +73,21 @@ RUN python3 -m pip install --upgrade cython && \
     pip uninstall -y em 
 
 # Build the dependencies and the ZED ROS2 Wrapper
-RUN /bin/bash -c "source /opt/ros/$ROS_DISTRO/install/setup.bash && \
-  colcon build --parallel-workers $(nproc) \
-  --event-handlers console_direct+ \
-  --cmake-args ' -DCMAKE_BUILD_TYPE=Release' \
-  ' -DCMAKE_LIBRARY_PATH=/usr/local/cuda/lib64/stubs' \
-  ' -DCMAKE_CXX_FLAGS="-Wl,--allow-shlib-undefined"' \
-  ' --no-warn-unused-cli' "
+RUN /bin/bash -c "source /opt/ros/$ROS_DISTRO/setup.bash && \
+source /opt/ros/$ROS_DISTRO/install/setup.bash && \
+colcon build --parallel-workers $(nproc) \
+--event-handlers console_direct+ \
+--cmake-args ' -DCMAKE_BUILD_TYPE=Release' \
+' -DCMAKE_LIBRARY_PATH=/usr/local/cuda/lib64/stubs' \
+' -DCMAKE_CXX_FLAGS="-Wl,--allow-shlib-undefined"' \
+' --no-warn-unused-cli' "
+
+COPY resources/embeddings.jsonl /opt/ros2/embeddings/
+COPY resources/mmembeddings.jsonl /opt/ros2/mmembeddings/embeddings.jsonl
+COPY resources/s_env.sh /root/ros2_ws/
 
 WORKDIR /root/ros2_ws
 
-# Setup environment variables
+# Setup environment variabless
 COPY ros_entrypoint_jetson.sh /sbin/ros_entrypoint.sh
 RUN sudo chmod 755 /sbin/ros_entrypoint.sh

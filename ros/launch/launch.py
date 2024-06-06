@@ -24,17 +24,14 @@ def generate_launch_description():
         Node(
             package='riva_asr',
             executable='riva_asr',
-            parameters=[
-                {"device_number": 1,
-                 "riva_uri": "172.17.0.3:50051"}
-            ]
         ),
         Node(
             package='riva_asr',
-            executable='walley_listener',
+            executable='listener',
             name='asr_listener',
             parameters=[
-                {"sound_device": 0}
+                {"sound_device": "miniDSP",
+                 "train_voice": False}
             ]
             
         ),
@@ -44,6 +41,10 @@ def generate_launch_description():
             remappings=[
             ('/image_raw', '/zed/zed_node/left/image_rect_color'),
          ]
+        ),
+        Node(
+            package='foxglove_bridge',
+            executable='foxglove_bridge',
         ),
         
         

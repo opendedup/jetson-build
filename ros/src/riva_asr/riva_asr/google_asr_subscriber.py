@@ -44,8 +44,11 @@ import queue
 import string
 import time
 
+from .utils import deEmojify, find_audio_device_index
 
-from .skills.agents import robot_agents,AgentRunner,google_search_tool
+
+from .skills.agents import robot_agents,AgentRunner
+
 
 
 class GoogleASRSubscriber(Node):
@@ -57,28 +60,39 @@ class GoogleASRSubscriber(Node):
             'asr',
             self.listener_callback,
             10)
-        self.declare_parameter('sound_device',0)
-        self.declare_parameter('robot_names',["Schimmel", "Schimmy","Shimmy"])
+        self.declare_parameter('sound_device',"miniDSP")
+        self.declare_parameter('train_voice',False)
+        self.declare_parameter('voice','en-US-Journey-O')
+        self.declare_parameter('robot_names',["Schimmel", "Schimmy","Shimmy","Shimmel","Shumi","Shimi","Shami","Shiml"])
         self.declare_parameter('prompt',"""Your name is Shimmy, which is short for Shimmel or Schimmel.
 Some Facts about you can use in context when answering questions:
     * You live with a family of 6 people.
     * You live in a house in Portland Oregon. This can be helpful when answering questions about weather and time.
     * You like to be silly
-
+    * You are a small Differential wheeled robot 
+    * You have the following dimensions:
+        * 320mm wide
+        * 410mm long
+        * 430mm tall
+        * 2 front Wheels are 110mm in diameter
 """)
         self.subscription  # prevent unused variable warning
         self.tts_service = texttospeech.TextToSpeechClient()
-        self.voice = texttospeech.VoiceSelectionParams(language_code="en-US",name="en-US-Studio-O")
+        self.voice_name = self.get_parameter("voice").value
+        self.train_voice = self.get_parameter('train_voice').value
+        self.voice = texttospeech.VoiceSelectionParams(language_code="en-US",name=self.voice_name)
         self.audio_config = texttospeech.AudioConfig(
             audio_encoding=texttospeech.AudioEncoding.MP3,
         )
         vertexai.init(project="lemmingsinthewind", location="us-central1")
-        model = GenerativeModel("gemini-1.5-pro-preview-0409",tools=[robot_agents,google_search_tool])
+        model = GenerativeModel("gemini-1.5-flash-001",tools=[robot_agents],system_instruction=[self.get_parameter("prompt").value])
         self.robot_names = self.get_parameter("robot_names").value
+        
         self.chat = model.start_chat()
         self.config = {
             "max_output_tokens": 1024,
-            "temperature": 0.0,
+            "temperature": 1,
+            "top_p": 0.95,
         }
         
 
@@ -88,17 +102,16 @@ Some Facts about you can use in context when answering questions:
             generative_models.HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT: generative_models.HarmBlockThreshold.BLOCK_ONLY_HIGH,
             generative_models.HarmCategory.HARM_CATEGORY_HARASSMENT: generative_models.HarmBlockThreshold.BLOCK_ONLY_HIGH,
         }
-        self.chat.send_message(self.get_parameter("prompt").value, 
-                               generation_config=self.config, safety_settings=self.safety_settings)
         
         self.sample_rate_hz = 44100
+        sound_device = find_audio_device_index(self.get_parameter("sound_device").value)
         p = pyaudio.PyAudio()
-
+        
         self.stream = p.open(format=p.get_format_from_width(2),
                         channels=1,
                         rate=self.sample_rate_hz,
                         output=True,
-                    output_device_index=self.get_parameter("sound_device").value)
+                    output_device_index=sound_device)
         self.text_q = queue.Queue()
         self.audio_q = queue.Queue()
         self.sound_q = queue.Queue()
@@ -134,6 +147,7 @@ Some Facts about you can use in context when answering questions:
     def get_speech(self,text):
         try:
             self.get_logger().info("processing_text %s" % (text))
+            text = deEmojify(text)
             input_text = texttospeech.SynthesisInput(text=text)
             response = self.tts_service.synthesize_speech(
                 input=input_text, voice=self.voice, audio_config=self.audio_config
@@ -145,64 +159,65 @@ Some Facts about you can use in context when answering questions:
             print(traceback.format_exc()) 
     
     def read_input(self,msg):
-        result = self.robot_runner.voice_emb_client.send_request(msg.embedding)
+        
+        
         #while not future.done():
         #    time.sleep(0.05)
-        self.get_logger().info(result.embeddings[0].metadata)
-        if len(result.embeddings) > 0:
-            emb = result.embeddings[0]
-            metadata = json.loads(emb.metadata)
-            person  = metadata["name"]
-            distance = emb.distance
-            if distance < 1500 and person.startswith("robo"):
-                self.get_logger().info("Ignoring %s match is %d" %(person,distance))
-            else:
-                if distance > 1500:
-                    self.get_logger().info(str(distance))
-                    person = "unknown"
-                self.get_logger().info(person)
-                responses = self.chat.send_message(f"{person} - \"{msg.chat_text}\"",
-                                        generation_config=self.config,stream=True, safety_settings=self.safety_settings)
-                
-                while responses is not None:
-                    api_part = None
-                    data_part = None
-                    for response in responses:
-                        self.get_logger().info("CMD = %s" %(response.candidates[0].content.parts[0].function_call.name))
-                        if response.candidates[0].content.parts[0].function_call.name == "get_weather":
-                            lat =response.candidates[0].content.parts[0].function_call.args["latitude"]
-                            lon =response.candidates[0].content.parts[0].function_call.args["longitude"]
-                            api_part = self.robot_runner.get_weather(lat,lon)
-                        elif response.candidates[0].content.parts[0].function_call.name == "get_time":
-                            time_zone =response.candidates[0].content.parts[0].function_call.args["time_zone"]
-                            api_part = self.robot_runner.get_current_time(time_zone)
-                        elif response.candidates[0].content.parts[0].function_call.name == "store_voice":
-                            person =response.candidates[0].content.parts[0].function_call.args["name"]
-                            api_part = self.robot_runner.add_voice(person,result.embedding)
-                        elif response.candidates[0].content.parts[0].function_call.name == "take_picture":
-                            api_part = Part.from_function_response(
-                                name="get_time",
-                                response={
-                                    "content": {"message":"image will be sent in next message"},
-                                },
-                            )
-                            data_part = self.robot_runner.get_image()
-                        elif response.candidates[0].content.parts[0].function_call.name == "remember_image_objects":
-                            api_part = self.robot_runner.remember_image_objects(response.candidates[0].content.parts[0].function_call.args["picture_context"])
-                        else:
+        
+        person = "unknown"
+        distance = 1600
+        if len(msg.embedding) > 0:
+            result = self.robot_runner.voice_emb_client.send_request(msg.embedding)
+            if len(result.embeddings) > 0:
+                emb = result.embeddings[0]
+                self.get_logger().info(result.embeddings[0].metadata)
+                metadata = json.loads(emb.metadata)
+                person  = metadata["name"]
+                distance = emb.distance
+        if distance < 1500 and person == self.voice_name:
+            self.get_logger().info("Ignoring %s match is %d" %(person,distance))
+        else:
+            if distance > 1500:
+                self.get_logger().info(str(distance))
+                person = "unknown"
+            self.get_logger().info(person)
+            responses = self.chat.send_message(f"{person} - \"{msg.chat_text}\"",
+                                    generation_config=self.config,stream=True, safety_settings=self.safety_settings)
+            
+            while responses is not None:
+                api_part = None
+                for response in responses:
+                    self.get_logger().info("CMD = %s" %(response.candidates[0]))
+                    if response.candidates[0].content.parts[0].function_call.name == "use_web_browser":
+                        context = response.candidates[0].content.parts[0].function_call.args["search_txt"]
+                        api_part = self.robot_runner.use_web(context)
+                        self.get_logger().info("web API_PART = %s" % (api_part))
+                    elif response.candidates[0].content.parts[0].function_call.name == "get_weather":
+                        lat =response.candidates[0].content.parts[0].function_call.args["latitude"]
+                        lon =response.candidates[0].content.parts[0].function_call.args["longitude"]
+                        api_part = self.robot_runner.get_weather(lat,lon)
+                    elif response.candidates[0].content.parts[0].function_call.name == "get_time":
+                        time_zone =response.candidates[0].content.parts[0].function_call.args["time_zone"]
+                        api_part = self.robot_runner.get_current_time(time_zone)
+                    elif response.candidates[0].content.parts[0].function_call.name == "remember_voice":
+                        person =response.candidates[0].content.parts[0].function_call.args["name"]
+                        api_part = self.robot_runner.add_voice(person,result.embedding)
+                    elif response.candidates[0].content.parts[0].function_call.name == "use_robot_eyes":
+                        api_part = self.robot_runner.get_image(f"{person} - \"{msg.chat_text}\"")
+                        self.get_logger().info("API_PART = %s" % (api_part))
+                        
+                    elif response.candidates[0].content.parts[0].function_call.name == "remember_image_objects":
+                        api_part = self.robot_runner.remember_image_objects(response.candidates[0].content.parts[0].function_call.args["picture_context"])
+                    elif len(response.candidates[0].content.parts[0].text) > 0:
                             self.text_q.put(response.candidates[0].content.parts[0].text)
                             self.get_logger().info(response.candidates[0].content.parts[0].text)
-                            
-                    if api_part != None:
-                        responses = self.chat.send_message(
-                                api_part,generation_config=self.config,stream=True, safety_settings=self.safety_settings
-                        )
-                        if data_part is not None:
-                            responses = self.chat.send_message(
-                                data_part,stream=True,generation_config=self.config,safety_settings=self.safety_settings
-                            )
-                    else:
-                        responses = None
+                        
+                if api_part != None:
+                    responses = self.chat.send_message(
+                            api_part,generation_config=self.config,stream=True, safety_settings=self.safety_settings
+                    )
+                else:
+                    responses = None
     def sound_chunker(self):
         block_size=1024
         while True:
@@ -212,18 +227,16 @@ Some Facts about you can use in context when answering questions:
                 self.get_logger().info("got audio block")
                 wf = wave.open(audio_task.result())
                 
-                self.get_logger().info("1")
                 data = wf.readframes(block_size)
 
                 while data != b'':
                     self.stream.write(data)
                     data = wf.readframes(block_size)
-                self.get_logger().info("2")
             except queue.Empty:
                 time.sleep(0.05)
             except Exception as e:
                 self.get_logger().error('Failed process sound')
-                self.get_logger().error('eeks %s' % traceback.format_exc())
+                self.get_logger().error('%s' % traceback.format_exc())
                                
                         
     def tworker(self):
@@ -263,7 +276,10 @@ Some Facts about you can use in context when answering questions:
     
 
     def listener_callback(self, msg):
-        self.get_logger().info('I heard: "%s"' % msg.chat_text)
+        self.get_logger().debug('I heard: "%s"' % msg.chat_text)
+        if len(msg.embedding) > 0 and self.train_voice == True:
+                self.robot_runner.add_voice(self.voice_name,msg.embedding)
+                self.get_logger().info('Training  %s' % self.voice_name)
         if self.check(msg.chat_text,self.robot_names):
             threading.Thread(target=self.read_input, args=[msg]).start()
             

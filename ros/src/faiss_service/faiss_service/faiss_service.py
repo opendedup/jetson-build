@@ -85,12 +85,15 @@ class EmbeddingService(Node):
         response.embeddings = []
         response.embedding = request.embedding
         for index, item in enumerate(ids):
-            emb = EmbResult()
-            emb.distance = float(distances[index])
-            emb.metadata = self.db[f"key{item}"]
-            
-            response.embeddings.append(emb)
-            self.get_logger().info('Loaded %s items' % (emb.metadata))
+            try:
+                emb = EmbResult()
+                emb.distance = float(distances[index])
+                emb.metadata = self.db[f"key{item}"]
+                
+                response.embeddings.append(emb)
+                self.get_logger().info('Loaded %s items' % (emb.metadata))
+            except:
+                self.get_logger().error('error getting embedding')
         self.get_logger().info('done')
         return response
 

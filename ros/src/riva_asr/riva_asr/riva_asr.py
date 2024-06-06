@@ -4,6 +4,8 @@ from chat_interfaces.msg import Chat
 import riva.client
 import riva.client.audio_io
 
+from .utils import find_audio_device_index
+
 
 import queue
 import threading
@@ -15,7 +17,7 @@ class RivaASRPublisher(Node):
 
     def __init__(self):
         super().__init__('riva_asr_publisher')
-        self.declare_parameter('device_number', 25)
+        self.declare_parameter('sound_device',"respeaker")
         self.declare_parameter('delay', 1.0)
         self.declare_parameter('sample_rate', 16000)
         self.declare_parameter('robot_names',["Schimmel", "Schimmy","Shimmy"])
@@ -23,12 +25,10 @@ class RivaASRPublisher(Node):
         
         
         self.boosted_lm_words = self.get_parameter("robot_names").value
-        self.device_number = self.get_parameter("device_number").value
+        self.device_number = find_audio_device_index(self.get_parameter("sound_device").value)
         self.delay = self.get_parameter("delay").value
         self.sample_rate = self.get_parameter("sample_rate").value
-    
         self.publisher_ = self.create_publisher(Chat, 'asr', 10)
-        riva.client.audio_io.list_input_devices()
         # Riva ASR client configuration
         auth = riva.client.Auth(
             uri=self.get_parameter("riva_uri").value,  # Replace with your Riva server address
@@ -54,6 +54,7 @@ class RivaASRPublisher(Node):
         t = threading.Thread(target=self.lworker)
         t.start()
         self.start_streaming()
+        
 
 
     def lworker(self):

@@ -1,0 +1,59 @@
+#!/bin/bash
+#trap 'kill $(jobs -p)' EXIT
+
+block_until_server_alive() {
+    # while process is running, check to see if it's alive and healthy
+    #Timeout after 5 minutes
+    TRITON_TIMEOUT_SEC=${TRITON_TIMEOUT_SEC:-300}
+    count=0
+    while kill -0 $1 2> /dev/null; do
+        rv_http=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:8000/v2/health/ready)
+        if [ $rv_http -ne 200 ]; then
+            echo "  > Riva waiting for Triton server to load all models...retrying in 1 second"
+            sleep 1
+        else
+            echo "  > Triton server is ready..."
+            return
+        fi
+        if [ $count -eq $TRITON_TIMEOUT_SEC ]; then
+          echo "  > Timed out."
+          break
+        fi
+        ((count=count+1))
+    done
+    echo "  > Triton server died before reaching ready state. Terminating Riva startup."
+    echo "Check Triton logs with: docker logs $riva_daemon_triton"
+    exit 1
+}
+
+if [ -z "$MODEL_REPOS" ]; then
+  model_repos=""
+  [ -d "/data/models" ] && model_repos="--model-repository /data/models "
+  [ -d "/data/models_vision/model_repository" ] && model_repos="--model-repository /data/models_vision/model_repository "
+else
+  model_repos="$MODEL_REPOS"
+fi
+
+# start up triton and block until alive
+${CUSTOM_TRITON_ENV} tritonserver --log-verbose=0 --disable-auto-complete-config $model_repos --cuda-memory-pool-byte-size=0:1000000000 &
+triton_pid=$!
+block_until_server_alive $triton_pid
+
+ngc_args=""
+if [[ -n "$RIVA_API_KEY" ]]; then
+  ngc_args="--api_key $RIVA_API_KEY --eula=$RIVA_EULA --org=$RIVA_API_NGC_ORG"
+fi
+
+# start up riva
+riva_server --triton_uri=localhost:8001 $ngc_args $@  &
+
+while sleep 5; do
+  ps aux | grep tritonserver | grep -q -v grep
+  PROCESS_1_STATUS=$?
+  ps aux | grep riva_server | grep -q -v grep
+  PROCESS_2_STATUS=$?
+  if [ $PROCESS_1_STATUS -ne 0 -o $PROCESS_2_STATUS -ne 0 ]; then
+    echo "One of the processes has exited unexpectedly. Stopping container."
+    exit 1
+  fi
+done
