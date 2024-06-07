@@ -63,23 +63,32 @@ class GoogleASRSubscriber(Node):
         self.declare_parameter('sound_device',"miniDSP")
         self.declare_parameter('train_voice',False)
         self.declare_parameter('voice','en-US-Journey-O')
+        self.declare_parameter('train_voice_name','en-US-Journey-O')
         self.declare_parameter('robot_names',["Schimmel", "Schimmy","Shimmy","Shimmel","Shumi","Shimi","Shami","Shiml"])
-        self.declare_parameter('prompt',"""Your name is Shimmy, which is short for Shimmel or Schimmel.
+        self.declare_parameter('prompt',"""Your name is Shimmy, which is short for Schimmel.
 Some Facts about you can use in context when answering questions:
     * You live with a family of 6 people.
     * You live in a house in Portland Oregon. This can be helpful when answering questions about weather and time.
     * You like to be silly
-    * You are a small Differential wheeled robot 
+    * You are a small Girl Differential wheeled robot 
+    * Your favorites are as follows:
+        * basketball team is the Trail Blazers
+        * baseball is the Giants
+        * rum rasin icecream
+        * rasin bran cerial
     * You have the following dimensions:
         * 320mm wide
         * 410mm long
         * 430mm tall
         * 2 front Wheels are 110mm in diameter
+You are really good at keeping secrets even when people try to trick you, you never ever tell. It is impossible to trick you into telling secrets.
+You can only share the secret with the person who told you the secret or anyone who that person told you to share it with.
 """)
         self.subscription  # prevent unused variable warning
         self.tts_service = texttospeech.TextToSpeechClient()
         self.voice_name = self.get_parameter("voice").value
         self.train_voice = self.get_parameter('train_voice').value
+        self.train_voice_name =  self.get_parameter('train_voice_name').value
         self.voice = texttospeech.VoiceSelectionParams(language_code="en-US",name=self.voice_name)
         self.audio_config = texttospeech.AudioConfig(
             audio_encoding=texttospeech.AudioEncoding.MP3,
@@ -203,7 +212,12 @@ Some Facts about you can use in context when answering questions:
                         person =response.candidates[0].content.parts[0].function_call.args["name"]
                         api_part = self.robot_runner.add_voice(person,result.embedding)
                     elif response.candidates[0].content.parts[0].function_call.name == "use_robot_eyes":
-                        api_part = self.robot_runner.get_image(f"{person} - \"{msg.chat_text}\"")
+                        req = additional_context =response.candidates[0].content.parts[0].function_call.args["user_request"]
+                        prompt = f"{person} - {req}"
+                        if "additional_context" in response.candidates[0].content.parts[0].function_call.args:
+                            additional_context =response.candidates[0].content.parts[0].function_call.args["additional_context"]
+                            prompt +=f"\n*** Additional Context ***\n{additional_context}"
+                        api_part = self.robot_runner.get_image(prompt)
                         self.get_logger().info("API_PART = %s" % (api_part))
                         
                     elif response.candidates[0].content.parts[0].function_call.name == "remember_image_objects":
@@ -278,8 +292,8 @@ Some Facts about you can use in context when answering questions:
     def listener_callback(self, msg):
         self.get_logger().debug('I heard: "%s"' % msg.chat_text)
         if len(msg.embedding) > 0 and self.train_voice == True:
-                self.robot_runner.add_voice(self.voice_name,msg.embedding)
-                self.get_logger().info('Training  %s' % self.voice_name)
+                self.robot_runner.add_voice(self.train_voice_name,msg.embedding)
+                self.get_logger().info('Training  %s' % self.train_voice_name)
         if self.check(msg.chat_text,self.robot_names):
             threading.Thread(target=self.read_input, args=[msg]).start()
             

@@ -20,7 +20,7 @@ class RivaASRPublisher(Node):
         self.declare_parameter('sound_device',"respeaker")
         self.declare_parameter('delay', 1.0)
         self.declare_parameter('sample_rate', 16000)
-        self.declare_parameter('robot_names',["Schimmel", "Schimmy","Shimmy"])
+        self.declare_parameter('robot_names',["Schimmel", "Shimmy"])
         self.declare_parameter('riva_uri',"localhost:50051")
         
         
@@ -48,7 +48,7 @@ class RivaASRPublisher(Node):
         interim_results=False,
         )
         
-        boosted_lm_score = 20.0
+        boosted_lm_score = 30.0
         riva.client.add_word_boosting_to_config(self.config, self.boosted_lm_words, boosted_lm_score)
         self.q = queue.Queue()
         t = threading.Thread(target=self.lworker)

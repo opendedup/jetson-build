@@ -24,6 +24,7 @@ def generate_launch_description():
         Node(
             package='riva_asr',
             executable='riva_asr',
+            parameters=[{"sound_device": "respeaker"}]
         ),
         Node(
             package='riva_asr',
@@ -31,7 +32,8 @@ def generate_launch_description():
             name='asr_listener',
             parameters=[
                 {"sound_device": "miniDSP",
-                 "train_voice": False}
+                 "train_voice": False,
+                 "train_voice_name": "unknown"}
             ]
             
         ),

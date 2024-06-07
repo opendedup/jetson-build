@@ -283,9 +283,11 @@ This function can be used for anything that requires eyes or a camera including:
                 "type": "object",
                 "properties": {
                     "user_request": {"type": "string", "description": "The request from the user."},
-                    "additional_context": {"type": "string", "description": "Any context from the conversation history that may be useful for the request."},
+                    "additional_context": {"type": "string", "description": "Any context from the conversation history that may be useful when analyzing what you see."},
                 },
+                "required" : ["user_request"],
             },
+
     )
 
 store_voice_func = FunctionDeclaration(
@@ -297,7 +299,9 @@ store_voice_func = FunctionDeclaration(
                 "name": {"type": "string", "description": "The persons's name assosiated with the voice to remember."},
                 
             },
+            "required" : ["name"],
         },
+        
 )
 
 store_image_func = FunctionDeclaration(
@@ -328,6 +332,7 @@ This can be used to ground responses with facts found in the internet. All the i
             "properties": {
                 "search_txt": {"type": "string", "description": "The text used to do the web search or request. Any context that could be helpful for the web search should be added."},
             },
+            "required":["search_txt"]
         },
 )
 google_search_tool = Tool.from_google_search_retrieval(

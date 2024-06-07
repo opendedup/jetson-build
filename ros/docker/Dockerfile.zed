@@ -27,8 +27,7 @@ RUN ln -snf /usr/share/zoneinfo/$TZ /etc/localtime && echo $TZ > /etc/timezone &
   apt purge -y '*opencv*' && \
   apt-get update && \
   apt-get upgrade -y && \
-  apt-get install -y pluginlib-dev screen libfmt-dev ffmpeg liburdfdom-tools libpng-dev libboost-all-dev nlohmann-json3-dev libboost-program-options-dev libssl-dev libwebsocketpp-dev  libtinyxml-dev lsb-release wget less udev sudo build-essential cmake python3 python3-dev python3-pip python3-wheel git jq libpq-dev zstd usbutils && \    
-  rm -rf /var/lib/apt/lists/*
+  apt-get install -y pluginlib-dev screen libfmt-dev ffmpeg liburdfdom-tools libpng-dev libboost-all-dev nlohmann-json3-dev libboost-program-options-dev libssl-dev libwebsocketpp-dev  libtinyxml-dev lsb-release wget less udev sudo build-essential cmake python3 python3-dev python3-pip python3-wheel git jq libpq-dev zstd usbutils    
 
 # Install the ZED SDK
 RUN echo "# R${L4T_MAJOR} (release), REVISION: ${L4T_MINOR}" > /etc/nv_tegra_release && \
@@ -40,8 +39,7 @@ RUN echo "# R${L4T_MAJOR} (release), REVISION: ${L4T_MINOR}" > /etc/nv_tegra_rel
   https://download.stereolabs.com/zedsdk/${ZED_SDK_MAJOR}.${ZED_SDK_MINOR}/l4t${L4T_MAJOR}.${L4T_MINOR}/jetsons && \
   chmod +x ZED_SDK_Linux_JP.run ; ./ZED_SDK_Linux_JP.run silent skip_tools && \
   rm -rf /usr/local/zed/resources/* && \
-  rm -rf ZED_SDK_Linux_JP.run && \
-  rm -rf /var/lib/apt/lists/*
+  rm -rf ZED_SDK_Linux_JP.run 
 
 # Install the ZED ROS2 Wrapper
 ENV ROS_DISTRO ${ROS2_DIST}
@@ -56,6 +54,7 @@ RUN git clone -b humble https://github.com/ros/pluginlib.git && \
   git clone --recursive https://github.com/stereolabs/zed-ros2-wrapper.git && \
   git clone https://github.com/odriverobotics/ros_odrive.git && \
   git clone -b humble https://github.com/ros-perception/vision_opencv.git && \
+  git clone https://github.com/opendedup/rtf_sensors.git && \
   apt install -y ros-$ROS_DISTRO-foxglove-bridge
 
 WORKDIR /root/ros2_ws/
@@ -68,8 +67,8 @@ RUN source /opt/ros/${ROS_DISTRO}/install/setup.bash && \
 
 # Install cython
 RUN python3 -m pip install --upgrade cython && \
-    pip install -U google-cloud-aiplatform opencv-python Jetson.GPIO && \
-    pip install empy && \
+    pip install -U google-cloud-aiplatform Jetson.GPIO && \
+    pip install empy Adafruit-Blinka adafruit-circuitpython-lsm6ds squaternion && \
     pip uninstall -y em 
 
 # Build the dependencies and the ZED ROS2 Wrapper
