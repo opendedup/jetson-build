@@ -18,13 +18,14 @@ def find_audio_device_index(device_name):
     info = p.get_host_api_info_by_index(0)
     num_devices = info.get("deviceCount")
     device_index = None
-
+    print("KKKKKKKKKKKKKKKKKKKKKKK")
     for i in range(num_devices):
 
         device_info = p.get_device_info_by_host_api_device_index(0, i)
-        
-        if device_name in device_info.get("name").lower():
+        print(device_info.get("name"))
+        if device_name.lower() in device_info.get("name").lower():
 
             device_index = i
+            break
 
     return device_index

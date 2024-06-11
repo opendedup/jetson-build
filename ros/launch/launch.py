@@ -30,6 +30,7 @@ def generate_launch_description():
             package='riva_asr',
             executable='listener',
             name='asr_listener',
+            output='both',
             parameters=[
                 {"sound_device": "miniDSP",
                  "train_voice": False,
@@ -43,11 +44,12 @@ def generate_launch_description():
             remappings=[
             ('/image_raw', '/zed/zed_node/left/image_rect_color'),
          ]
-        ),
-        Node(
-            package='foxglove_bridge',
-            executable='foxglove_bridge',
-        ),
+        )
+        # ,
+        # Node(
+        #     package='foxglove_bridge',
+        #     executable='foxglove_bridge',
+        # ),
         
         
     ])
