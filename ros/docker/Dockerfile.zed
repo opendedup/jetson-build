@@ -55,8 +55,8 @@ RUN git clone -b humble https://github.com/ros/pluginlib.git && \
   git clone https://github.com/odriverobotics/ros_odrive.git && \
   git clone -b humble https://github.com/ros-perception/vision_opencv.git && \
   git clone https://github.com/opendedup/rtf_sensors.git && \
-  git clone -b ros2 https://github.com/ros-perception/depthimage_to_laserscan.git
-RUN  apt-get update && apt-get upgrade -y && apt install -y ros-$ROS_DISTRO-foxglove-bridge
+  git clone https://github.com/joshnewans/twist_stamper.git
+RUN  apt-get update && apt-get upgrade -y && apt install -y ros-$ROS_DISTRO-twist-mux ros-$ROS_DISTRO-foxglove-bridge ros-$ROS_DISTRO-rtabmap-ros
 
 WORKDIR /root/ros2_ws/
 RUN source /opt/ros/${ROS_DISTRO}/install/setup.bash && \

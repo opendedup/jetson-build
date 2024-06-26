@@ -16,12 +16,14 @@ from vertexai.vision_models import (
     MultiModalEmbeddingModel
 )
 import base64
+import subprocess
 import pytz 
 import traceback
 import logging
 import sys
 from .image_client import ImageClientAsync
 from .faiss_client import FaissClientAsync
+from .microcontroller_client import MicroControllerClientAsync
 
 import io
 import PIL.Image as Image
@@ -42,6 +44,7 @@ class AgentRunner:
     def __init__(self,image_system_instructions=""):
         self.image_client = ImageClientAsync()
         self.voice_emb_client = FaissClientAsync()
+        self.microcontroller_client = MicroControllerClientAsync()
         self.image_emb_client = FaissClientAsync("images")
         vertexai.init(project="lemmingsinthewind", location="us-central1")
         self.image_model = GenerativeModel("gemini-1.5-flash-001",system_instruction=[image_system_instructions])
@@ -120,6 +123,85 @@ class AgentRunner:
                 name="store_voice",
                 response={
                     "content": {"error":"cannot store voices at this time"},
+                },
+            )
+        return part
+    
+    def change_led_color(self,red,green,blue):
+        try:
+            self.microcontroller_client.publish_ledcolor(red,green,blue)
+            part = Part.from_function_response(
+                name="change_led_color",
+                response={
+                    "content": {"status":"done"},
+                },
+            )
+        except:
+            logging.error(traceback.format_exc()) 
+            part = Part.from_function_response(
+                name="change_led_color",
+                response={
+                    "content": {"error":"cannot change color at this time"},
+                },
+            )
+        return part
+    
+    def change_brightness(self,brightness):
+        try:
+            self.microcontroller_client.publish_ledbrightness(brightness)
+            part = Part.from_function_response(
+                name="change_brightness",
+                response={
+                    "content": {"status":"done"},
+                },
+            )
+        except:
+            logging.error(traceback.format_exc()) 
+            part = Part.from_function_response(
+                name="change_brightness",
+                response={
+                    "content": {"error":"cannot change color at this time"},
+                },
+            )
+        return part
+    
+    def change_led_pattern(self,pattern):
+        try:
+            self.microcontroller_client.publish_ledpattern(pattern)
+            part = Part.from_function_response(
+                name="change_led_pattern",
+                response={
+                    "content": {"status":"done"},
+                },
+            )
+        except:
+            logging.error(traceback.format_exc()) 
+            part = Part.from_function_response(
+                name="change_led_pattern",
+                response={
+                    "content": {"error":"cannot change color at this time"},
+                },
+            )
+        return part
+    
+    def get_power(self):
+        try:
+            response = self.microcontroller_client.send_power_request()
+            part = Part.from_function_response(
+                name="get_power",
+                response={
+                    "content": {"voltage":response.powerusage.loadvoltage,
+                                "current_milli_amps": response.powerusage.currentma,
+                                "milli_watts":response.powerusage.powermw
+                                },
+                },
+            )
+        except:
+            logging.error(traceback.format_exc()) 
+            part = Part.from_function_response(
+                name="get_power",
+                response={
+                    "content": {"error":"cannot get power at this time"},
                 },
             )
         return part
@@ -209,8 +291,11 @@ class AgentRunner:
 
     def get_current_time(self,timezone):
         try:
-            tz = pytz.timezone(timezone) 
-            now = datetime.now(tz)
+            try:
+                tz = pytz.timezone(timezone) 
+                now = datetime.now(tz)
+            except:
+                now = datetime.now()
             date_time = now.strftime("%m/%d/%Y, %H:%M")
             api_response = {"current_time": date_time, "time_zone": timezone}
             part = Part.from_function_response(
@@ -228,6 +313,29 @@ class AgentRunner:
                 },
             )
         return part
+    
+    def change_voice_volume(self,percentage: float, increase: bool = True):
+        """
+        Adjusts the system volume by a given percentage.
+
+        Args:
+            percentage: The percentage to adjust the volume by.
+            increase: Whether to increase (True) or decrease (False) the volume.
+        """
+
+        # Get current volume using amixer
+        current_volume_output = subprocess.check_output(["amixer", "get", "Master"])
+        current_volume = int(current_volume_output.decode().split()[4].split("%")[0])
+
+        # Calculate the adjusted volume
+        adjusted_volume = current_volume + (percentage * current_volume / 100) if increase else current_volume - (percentage * current_volume / 100)
+        adjusted_volume = int(adjusted_volume)
+
+        # Clamp the volume to the valid range (0-100)
+        adjusted_volume = max(0, min(adjusted_volume, 100))
+
+        # Set the new volume using amixer
+        subprocess.run(["amixer", "set", "Master", str(adjusted_volume) + "%"])
 
 def convert_image(ros_image):
         cv_image = CvBridge().imgmsg_to_cv2(ros_image, "rgb8")
@@ -264,7 +372,62 @@ get_time_func = FunctionDeclaration(
             parameters={
                 "type": "object",
                 "properties": {
-                    "time_zone": {"type": "string", "description": "A Valid Time Zone guessed from the request formated like Asia/Kolkata, America/New_York  so it can be used in a python api call."}
+                    "time_zone": {"type": "string", "description": "A Valid Time Zone guessed from the request or system context. Its formated like Asia/Kolkata, America/New_York  so it can be used in a python api call."}
+                },
+                "required" : ["time_zone"],
+            },
+    )
+
+change_neopixels_func = FunctionDeclaration(
+            name="change_led_color",
+            description="""Change the color of the rgb neopixel display on the front of your body. You can use this to turn on the display, change the color of the display, or turn off the display. 
+            * If you want to turn off the display make red,green, and blue all 0.
+            * If you want the color yellow red = 255, green=255, blue=0""",
+            # Function parameters are specified in OpenAPI JSON schema format
+            parameters={
+                "type": "object",
+                "properties": {
+                    "red": {"type": "number", "description": "an integer 0 to 255 that indicates the intensity of the red color."},
+                    "green": {"type": "number", "description": "an integer 0 to 255 that indicates the intensity of the green color."},
+                    "blue": {"type": "number", "description": "an integer 0 to 255 that indicates the intensity of the blue color."},
+                },
+                "required" : ["red","green","blue"],
+            },
+    )
+
+change_brightness_func = FunctionDeclaration(
+            name="change_brightness",
+            description="""Change Brightness of the neopixel let. The brightness is a number between 0 and 100. 0 is the lowest.""",
+            # Function parameters are specified in OpenAPI JSON schema format
+            parameters={
+                "type": "object",
+                "properties": {
+                    "brightness": {"type": "number", "description": "an integer 0 to 100 that indicates the brightness."}
+                },
+                "required" : ["brightness"],
+            },
+    )
+
+change_led_pattern = FunctionDeclaration(
+            name="change_led_pattern",
+            description="""Change the pattern for the neopixel array on the robot.""",
+            # Function parameters are specified in OpenAPI JSON schema format
+            parameters={
+                "type": "object",
+                "properties": {
+                    "pattern": {"type": "string", "description": "the name of the pattern."}
+                },
+                "required" : ["pattern"],
+            },
+    )
+
+get_power_func = FunctionDeclaration(
+            name="get_power",
+            description="""get the current wattage, voltage, and amperage usage on the robot.""",
+            # Function parameters are specified in OpenAPI JSON schema format
+            parameters={
+                "type": "object",
+                "properties": {
                 },
             },
     )
@@ -292,7 +455,7 @@ This function can be used for anything that requires eyes or a camera including:
 
 store_voice_func = FunctionDeclaration(
         name="remember_voice",
-        description="Remember someone by their voice using your robot hearing. This grabs the embeddings of the person and stores it in a vector store for later retreival.",
+        description="Capture introductions and remember someone by their voice using your robot hearing. If someone introduces themselves with statements like \"This is Sam\" or \"I'm Jenny\" or tells you to remember their voice use this function. This is useful for remembering people for later conversations or context.",
         parameters={
             "type": "object",
             "properties": {
@@ -302,6 +465,21 @@ store_voice_func = FunctionDeclaration(
             "required" : ["name"],
         },
         
+)
+
+change_volume_func = FunctionDeclaration(
+    name="change_voice_volume",
+        description="Lower or Raise the volume of your speaker using amixer.",
+        parameters={
+            "type": "object",
+            "properties": {
+                "volume_percent": {"type": "number", "description": """the percent the volume should be raised or lowered using amixer. The value should be returned as a positive float value.
+                                   As an example, if the request is to lower the volume by 10% volume_percent would return .10"""},
+                "increase_volume": {"type": "boolean", "description": """Return true if the volume should be raised, otherwise return false."""},
+                
+            },
+            "required" : ["increase_volume"],
+        },
 )
 
 store_image_func = FunctionDeclaration(
@@ -318,10 +496,10 @@ store_image_func = FunctionDeclaration(
 
 web_browser = FunctionDeclaration(
         name="use_web_browser",
-        description="""Use a web browser to search the internet where the answer could be enhanced with additional context, the answer is unknow, or not confident. 
+        description="""Use a web browser to consult the internet where the answer could be enhanced with additional context, you don know the answer, or you are not confident in your response. 
 This can be used to ground responses with facts found in the internet. All the internet is available to this function. Some of the capabilites available to this function are:
 * Get the Weather.
-* Get useful facts and figures.
+* Get useful information, facts, and figures.
 * Help with Shopping and finding products
 * Get Current Events and News
 * Answer questions grounded in real data
@@ -345,6 +523,12 @@ robot_agents = Tool(
             store_voice_func,
             take_picture_function,
             web_browser,
+            change_volume_func,
+            change_neopixels_func,
+            change_brightness_func,
+            get_power_func,
+            change_led_pattern
+            
         ],
 )
 

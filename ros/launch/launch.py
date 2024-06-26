@@ -21,6 +21,14 @@ def generate_launch_description():
                  "embeddings_path":"/opt/ros2/mmembeddings/"}
             ]
         ),
+         Node(
+            package='shimmy_microcontroller',
+            executable='service',
+            name="m_service",
+            parameters=[
+                {             "serial_device":"/dev/ttyACM0"}
+            ]
+        ),
         Node(
             package='riva_asr',
             executable='riva_asr',
@@ -45,11 +53,11 @@ def generate_launch_description():
             ('/image_raw', '/zed/zed_node/left/image_rect_color'),
          ]
         )
-        # ,
-        # Node(
-        #     package='foxglove_bridge',
-        #     executable='foxglove_bridge',
-        # ),
+        ,
+        Node(
+            package='foxglove_bridge',
+            executable='foxglove_bridge',
+        ),
         
         
     ])

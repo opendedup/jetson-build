@@ -1,0 +1,5 @@
+float32 busvoltage
+float32 shuntvoltage
+float32 currentma
+int32 powermw
+float32 loadvoltage

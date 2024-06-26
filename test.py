@@ -1,25 +1,75 @@
-import vertexai
-
-from vertexai.preview.generative_models import grounding
-from vertexai.generative_models import GenerationConfig, GenerativeModel, Tool
-
-# TODO(developer): Update and un-comment below line
-# project_id = "PROJECT_ID"
-
-vertexai.init(project="lemmingsinthewind", location="us-central1")
+import serial
+import time
+import json
 
 
+smiley_face = [[0, 0, 0], [0, 0, 0], [0, 0, 0], [0, 0, 0], [194, 195, 199], [194, 195, 199], [194, 195, 199], [194, 195, 199], [0, 0, 0], [0, 0, 0], [0, 0, 0], [0, 0, 0], [194, 195, 199], [194, 195, 199], [194, 195, 199], [194, 195, 199], [0, 0, 0], [0, 0, 0], [0, 0, 0], [0, 0, 0], [194, 195, 199], [194, 195, 199], [194, 195, 199], [194, 195, 199], [0, 0, 0], [0, 0, 0], [0, 0, 0], [0, 0, 0], [194, 195, 199], [194, 195, 199], [194, 195, 199], [194, 195, 199], [194, 195, 199], [194, 195, 199], [194, 195, 199], [194, 195, 199], [255, 241, 232], [255, 241, 232], [255, 241, 232], [255, 241, 232], [194, 195, 199], [194, 195, 199], [194, 195, 199], [194, 195, 199], [255, 241, 232], [255, 241, 232], [255, 241, 232], [255, 241, 232], [194, 195, 199], [194, 195, 199], [194, 195, 199], [194, 195, 199], [255, 241, 232], [255, 241, 232], [255, 241, 232], [255, 241, 232], [194, 195, 199], [194, 195, 199], [194, 195, 199], [194, 195, 199], [255, 241, 232], [255, 241, 232], [255, 241, 232], [255, 241, 232]]
 
-# Use Google Search for grounding
-tool = Tool.from_google_search_retrieval(grounding.GoogleSearchRetrieval(disable_attribution=False))
-model = GenerativeModel(model_name= "gemini-1.5-pro",tools=[tool])
-prompt = "When is the next total solar eclipse in US?"
-response = model.generate_content(
-    prompt,
-    tools=[tool],
-    generation_config=GenerationConfig(
-        temperature=0.0,
-    ),
-)
+SerialObj = serial.Serial('/dev/ttyACM0') # COMxx  format on Windows
+                  # ttyUSBx format on Linux
+SerialObj.baudrate = 115200  # set Baud rate to 9600
+SerialObj.bytesize = 8   # Number of data bits = 8
+SerialObj.parity  ='N'   # No parity
+SerialObj.stopbits = 1   # Number of Stop bits = 1
+time.sleep(3)
+obj = {"command":"power"}
+data=json.dumps(obj)
+data = f"{data}\n"
+SerialObj.write(data.encode("utf-8"))    #transmit 'A' (8bit) to micro/Arduino
+ReceivedString = SerialObj.readline()
+robj = json.loads(ReceivedString)
+print(robj)
+time.sleep(1)
+obj = {"command":"led",'subcommand':"pattern","pattern":"rainbow"}
+data=json.dumps(obj)
+data = f"{data}\n"
+SerialObj.write(data.encode("utf-8"))    #transmit 'A' (8bit) to micro/Arduino
+ReceivedString = SerialObj.readline()
+robj = json.loads(ReceivedString)
+print(robj)
+time.sleep(1)
+obj = {"command":"led",'subcommand':"fill","colors":[0,0,255],"start":0,"num":64}
 
-print(response)
+data=json.dumps(obj)
+data = f"{data}\n"
+SerialObj.write(data.encode("utf-8"))    #transmit 'A' (8bit) to micro/Arduino
+ReceivedString = SerialObj.readline()
+robj = json.loads(ReceivedString)
+print(robj)
+time.sleep(1)
+obj = {"command":"led",'subcommand':"brightness","value":20}
+
+data=json.dumps(obj)
+data = f"{data}\n"
+SerialObj.write(data.encode("utf-8"))    #transmit 'A' (8bit) to micro/Arduino
+ReceivedString = SerialObj.readline()
+robj = json.loads(ReceivedString)
+print(robj)
+time.sleep(1)
+obj = {"command":"led",'subcommand':"brightness","value":200}
+
+data=json.dumps(obj)
+data = f"{data}\n"
+SerialObj.write(data.encode("utf-8"))    #transmit 'A' (8bit) to micro/Arduino
+ReceivedString = SerialObj.readline()
+robj = json.loads(ReceivedString)
+print(robj)
+time.sleep(1)
+
+obj = {"command":"led",'subcommand':"paint","pixels":smiley_face}
+data=json.dumps(obj)
+data = f"{data}\n"
+SerialObj.write(data.encode("utf-8"))    #transmit 'A' (8bit) to micro/Arduino
+ReceivedString = SerialObj.readline()
+robj = json.loads(ReceivedString)
+print(robj)
+time.sleep(1)
+obj = {"command":"led",'subcommand':"turnoff"}
+
+data=json.dumps(obj)
+data = f"{data}\n"
+SerialObj.write(data.encode("utf-8"))    #transmit 'A' (8bit) to micro/Arduino
+ReceivedString = SerialObj.readline()
+robj = json.loads(ReceivedString)
+print(robj)
+SerialObj.close()      # Close the port

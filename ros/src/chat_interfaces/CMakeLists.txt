@@ -27,9 +27,14 @@ find_package(rosidl_default_generators REQUIRED)
 find_package(sensor_msgs REQUIRED)
 rosidl_generate_interfaces(${PROJECT_NAME}
   "msg/Chat.msg"
+  "msg/PowerUsage.msg"
   "msg/SkillRequest.msg"
+  "msg/LedBrightness.msg"
+  "msg/LedColor.msg"
+  "msg/LedPattern.msg"
   "srv/SaySomething.srv"
   "srv/GetImage.srv"
+  "srv/GetPower.srv"
   DEPENDENCIES 
   sensor_msgs
 )

@@ -69,20 +69,26 @@ class GoogleASRSubscriber(Node):
 Some Facts about you can use in context when answering questions:
     * You live with a family of 6 people.
     * You live in a house in Portland Oregon. This can be helpful when answering questions about weather and time.
-    * You like to be silly
-    * You are a small Girl Differential wheeled robot 
+    * You like to be silly but not super chatty
+    * You are a small Girl Differential wheeled robot that weighs about 2 KG
     * Your favorites are as follows:
         * basketball team is the Trail Blazers
         * baseball is the Giants
         * rum rasin icecream
         * rasin bran cerial
-    * You have the following dimensions:
+    * Here are some interesting facts about your body:
         * 320mm wide
         * 410mm long
         * 430mm tall
         * 2 front Wheels are 110mm in diameter
-You are really good at keeping secrets even when people try to trick you, you never ever tell. It is impossible to trick you into telling secrets.
-You can only share the secret with the person who told you the secret or anyone who that person told you to share it with.
+        * You have a 8x8 neopixel display on your front to create a light show or show emotions.
+        * You are powered by a 3S lithium ion battery pack that has about 15 Amp hours of power.
+    * Here are some details about your internals:
+        * running on a Jetson Orin NX with 16GB of Ram
+        * Your eyes are a zed 2 stereo camera
+        * You have a speaker you talk through
+        * Your hearing is a ReSpeaker Mic Array v2.0
+        * You are Running ROS2 Humble on Ubuntu 22.04 Nvidia Jetpack 6.    
 """)
         self.subscription  # prevent unused variable warning
         self.tts_service = texttospeech.TextToSpeechClient()
@@ -192,46 +198,77 @@ You can only share the secret with the person who told you the secret or anyone 
             self.get_logger().info(person)
             responses = self.chat.send_message(f"{person} - \"{msg.chat_text}\"",
                                     generation_config=self.config,stream=True, safety_settings=self.safety_settings)
+            self.parse_responses(responses)
             
-            while responses is not None:
+    def parse_responses(self,responses):
+        api_parts =[]
+        while responses is not None:
+            
+            for response in responses:
                 api_part = None
-                for response in responses:
-                    self.get_logger().info("CMD = %s" %(response.candidates[0]))
-                    if response.candidates[0].content.parts[0].function_call.name == "use_web_browser":
-                        context = response.candidates[0].content.parts[0].function_call.args["search_txt"]
-                        api_part = self.robot_runner.use_web(context)
-                        self.get_logger().info("web API_PART = %s" % (api_part))
-                    elif response.candidates[0].content.parts[0].function_call.name == "get_weather":
-                        lat =response.candidates[0].content.parts[0].function_call.args["latitude"]
-                        lon =response.candidates[0].content.parts[0].function_call.args["longitude"]
-                        api_part = self.robot_runner.get_weather(lat,lon)
-                    elif response.candidates[0].content.parts[0].function_call.name == "get_time":
-                        time_zone =response.candidates[0].content.parts[0].function_call.args["time_zone"]
-                        api_part = self.robot_runner.get_current_time(time_zone)
-                    elif response.candidates[0].content.parts[0].function_call.name == "remember_voice":
-                        person =response.candidates[0].content.parts[0].function_call.args["name"]
-                        api_part = self.robot_runner.add_voice(person,result.embedding)
-                    elif response.candidates[0].content.parts[0].function_call.name == "use_robot_eyes":
-                        req = additional_context =response.candidates[0].content.parts[0].function_call.args["user_request"]
-                        prompt = f"{person} - {req}"
-                        if "additional_context" in response.candidates[0].content.parts[0].function_call.args:
-                            additional_context =response.candidates[0].content.parts[0].function_call.args["additional_context"]
-                            prompt +=f"\n*** Additional Context ***\n{additional_context}"
-                        api_part = self.robot_runner.get_image(prompt)
-                        self.get_logger().info("API_PART = %s" % (api_part))
-                        
-                    elif response.candidates[0].content.parts[0].function_call.name == "remember_image_objects":
-                        api_part = self.robot_runner.remember_image_objects(response.candidates[0].content.parts[0].function_call.args["picture_context"])
-                    elif len(response.candidates[0].content.parts[0].text) > 0:
-                            self.text_q.put(response.candidates[0].content.parts[0].text)
-                            self.get_logger().info(response.candidates[0].content.parts[0].text)
-                        
+                self.get_logger().info("CMD = %s" %(response.candidates[0]))
+                # if response.candidates[0].finish_reason.name != "FINISH_REASON_UNSPECIFIED":
+                #     self.get_logger().info("done= %s" % response.candidates[0].finish_reason)
+                #     break
+                if response.candidates[0].content.parts[0].function_call.name == "use_web_browser":
+                    context = response.candidates[0].content.parts[0].function_call.args["search_txt"]
+                    api_part = self.robot_runner.use_web(context)
+                    self.get_logger().info("web API_PART = %s" % (api_part))
+                elif response.candidates[0].content.parts[0].function_call.name == "get_weather":
+                    lat =response.candidates[0].content.parts[0].function_call.args["latitude"]
+                    lon =response.candidates[0].content.parts[0].function_call.args["longitude"]
+                    api_part = self.robot_runner.get_weather(lat,lon)
+                elif response.candidates[0].content.parts[0].function_call.name == "change_led_color":
+                    red =response.candidates[0].content.parts[0].function_call.args["red"]
+                    green =response.candidates[0].content.parts[0].function_call.args["green"]
+                    blue =response.candidates[0].content.parts[0].function_call.args["blue"]
+                    api_part = self.robot_runner.change_led_color(red,green,blue)
+                elif response.candidates[0].content.parts[0].function_call.name == "change_brightness":
+                    brightness =response.candidates[0].content.parts[0].function_call.args["brightness"]
+                    api_part = self.robot_runner.change_brightness(brightness)
+                elif response.candidates[0].content.parts[0].function_call.name == "get_power":
+                    api_part = self.robot_runner.get_power()
+                elif response.candidates[0].content.parts[0].function_call.name == "change_led_pattern":
+                    pattern =response.candidates[0].content.parts[0].function_call.args["pattern"]
+                    api_part = self.robot_runner.change_led_pattern(pattern)
+                elif response.candidates[0].content.parts[0].function_call.name == "get_time":
+                    time_zone =response.candidates[0].content.parts[0].function_call.args["time_zone"]
+                    api_part = self.robot_runner.get_current_time(time_zone)
+                elif response.candidates[0].content.parts[0].function_call.name == "remember_voice":
+                    person =response.candidates[0].content.parts[0].function_call.args["name"]
+                    api_part = self.robot_runner.add_voice(person,result.embedding)
+                elif response.candidates[0].content.parts[0].function_call.name == "change_voice_volume":
+                    volume_percent = .10
+                    if "volume_percent" in response.candidates[0].content.parts[0].function_call.args:
+                        volume_percent =response.candidates[0].content.parts[0].function_call.args["volume_percent"]
+                    increase_volume =response.candidates[0].content.parts[0].function_call.args["increase_volume"]
+                    api_part = self.robot_runner.change_voice_volume(volume_percent,increase_volume)
+                elif response.candidates[0].content.parts[0].function_call.name == "use_robot_eyes":
+                    req = additional_context =response.candidates[0].content.parts[0].function_call.args["user_request"]
+                    prompt = f"{person} - {req}"
+                    if "additional_context" in response.candidates[0].content.parts[0].function_call.args:
+                        additional_context =response.candidates[0].content.parts[0].function_call.args["additional_context"]
+                        prompt +=f"\n*** Additional Context ***\n{additional_context}"
+                    api_part = self.robot_runner.get_image(prompt)
+                    self.get_logger().info("API_PART = %s" % (api_part))
+                    
+                elif response.candidates[0].content.parts[0].function_call.name == "remember_image_objects":
+                    api_part = self.robot_runner.remember_image_objects(response.candidates[0].content.parts[0].function_call.args["picture_context"])
+                elif len(response.candidates[0].content.parts[0].text) > 0:
+                        self.text_q.put(response.candidates[0].content.parts[0].text)
+                        self.get_logger().info(response.candidates[0].content.parts[0].text)
                 if api_part != None:
-                    responses = self.chat.send_message(
-                            api_part,generation_config=self.config,stream=True, safety_settings=self.safety_settings
-                    )
+                    api_parts.append(api_part)
+                    responses = None
                 else:
                     responses = None
+        if len(api_parts) > 0:
+            n_responses = self.chat.send_message(
+                        api_parts,generation_config=self.config,stream=True, safety_settings=self.safety_settings
+            )
+            self.parse_responses(n_responses)
+            
+    
     def sound_chunker(self):
         block_size=1024
         while True:
@@ -269,11 +306,12 @@ You can only share the secret with the person who told you the secret or anyone 
                         resp_text = [sent.text for sent in doc.sents][-1]
                         if len(sentences) > 0:
                             talk_text = " ".join(sentences)
-                            try:
-                                self.audio_q.put(executor.submit(self.get_speech, talk_text))
-                                self.get_logger().info(f"saying {talk_text}")
-                            except Exception as error:
-                                self.get_logger().error(error.message)
+                            if len(talk_text) > 0:
+                                try:
+                                    self.audio_q.put(executor.submit(self.get_speech, talk_text))
+                                    self.get_logger().info(f"saying {talk_text}")
+                                except Exception as error:
+                                    self.get_logger().error(error.message)
                 except queue.Empty:
                     if len(resp_text) > 0:
                         doc = nlp(resp_text)

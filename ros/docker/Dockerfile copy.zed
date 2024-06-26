@@ -1,0 +1,122 @@
+FROM dustynv/ros:humble-llm-r36.3.0
+
+ARG ZED_SDK_MAJOR=4
+ARG ZED_SDK_MINOR=1
+ARG JETPACK_MAJOR=5
+ARG L4T_MAJOR=36
+ARG L4T_MINOR=3
+
+ARG ROS2_DIST=humble       # ROS2 distribution
+
+# ZED ROS2 Wrapper dependencies version
+ARG XACRO_VERSION=2.0.8
+ARG DIAGNOSTICS_VERSION=3.0.0
+ARG AMENT_LINT_VERSION=0.12.4
+ARG GEOGRAPHIC_INFO_VERSION=1.0.4
+ARG ROBOT_LOCALIZATION_VERSION=3.4.2
+ENV DEBIAN_FRONTEND noninteractive
+ENV ROS_DISTRO ${ROS2_DIST}
+
+RUN useradd -rm -d /home/nvidia -s /bin/bash -g root -G sudo -u 1000 nvidia
+RUN echo '%sudo ALL=(ALL) NOPASSWD:ALL' >> \
+/etc/sudoers
+USER nvidia
+
+#Install base
+ENV SHELL /bin/bash
+RUN sudo apt update && \
+	sudo apt upgrade -y && \
+	sudo apt install -y vim wget alsa-base \
+	alsa-utils \
+	libsndfile1-dev libopenblas-dev libportaudio2 portaudio19-dev zstd python3-pip
+
+COPY requirements.txt .
+RUN python3 -m pip install --upgrade pip && \
+	pip install --user -r requirements.txt && \
+	sudo rm requirements.txt && \
+	python -m spacy download en_core_web_sm
+
+RUN sed -i 's/^#force_color_prompt=yes/force_color_prompt=yes/' /home/nvidia/.bashrc
+RUN curl -sSL https://sdk.cloud.google.com | bash
+RUN pip install --user huggingface_hub[hf_transfer]
+RUN pip install --user https://developer.download.nvidia.cn/compute/redist/jp/v60dp/pytorch/torch-2.3.0a0+6ddf5cf85e.nv24.04.14026654-cp310-cp310-linux_aarch64.whl
+COPY pkgs/faiss-1.7.4-py3-none-any.whl .
+RUN pip install --user faiss-1.7.4-py3-none-any.whl
+ENV PATH $PATH:/home/nvidia/google-cloud-sdk/bin
+USER root
+# Disable sudo apt-get warnings
+RUN sudo apt-key adv --keyserver keyserver.ubuntu.com --recv-keys 42D5A192B819C5DA || true && \
+  sudo apt-get update || true && sudo apt-get install -y --no-install-recommends sudo apt-utils dialog
+  
+ENV TZ=America/Los_Angeles
+
+RUN ln -snf /usr/share/zoneinfo/$TZ /etc/localtime && echo $TZ > /etc/timezone && \
+  sudo apt remove libopencv-dev python3-opencv && \
+  sudo apt purge -y '*opencv*' && \
+  sudo apt-get update && \
+  sudo apt-get upgrade -y && \
+  sudo apt-get install -y pluginlib-dev screen libfmt-dev ffmpeg liburdfdom-tools libpng-dev libboost-all-dev nlohmann-json3-dev libboost-program-options-dev libssl-dev libwebsocketpp-dev  libtinyxml-dev lsb-release wget less udev sudo build-essential cmake python3 python3-dev python3-pip python3-wheel git jq libpq-dev zstd usbutils    
+
+USER nvidia
+WORKDIR /home/nvidia/
+# Install the ZED SDK
+RUN echo "# R${L4T_MAJOR} (release), REVISION: ${L4T_MINOR}" > /etc/nv_tegra_release && \
+  sudo apt-get update -y || true && \
+  sudo apt-get install -y --no-install-recommends zstd wget less cmake curl gnupg2 \
+  build-essential python3 python3-pip python3-dev python3-setuptools libusb-1.0-0-dev -y && \
+  sudo apt-get install -y python3-rosdep python3-rosinstall-generator python3-vcstool python3-rosinstall build-essential && \
+  pip install --user protobuf
+WORKDIR /home/nvidia/
+RUN wget -q --no-check-certificate -O ZED_SDK_Linux_JP.run \
+https://download.stereolabs.com/zedsdk/4.1/l4t36.3/jetsons && \
+  chmod 777 ZED_SDK_Linux_JP.run && \
+  sudo mkdir /usr/local/zed/ && \
+  sudo chmod -R 777 /usr/local/zed/ && \ 
+  ./ZED_SDK_Linux_JP.run silent skip_tools && \
+  rm -rf ZED_SDK_Linux_JP.run 
+
+# Install the ZED ROS2 Wrapper
+RUN  sudo curl -sSL https://raw.githubusercontent.com/ros/rosdistro/master/ros.key -o /usr/share/keyrings/ros-archive-keyring.gpg && \
+echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/ros-archive-keyring.gpg] http://packages.ros.org/ros2/ubuntu $(lsb_release -cs) main" | sudo tee /etc/apt/sources.list.d/ros2.list > /dev/null &&\
+sudo apt-get update && sudo apt-get upgrade -y
+
+
+# Install packages
+WORKDIR /home/nvidia/ros2_ws/src
+RUN git clone -b $ROS_DISTRO https://github.com/ros/pluginlib.git && \   
+  git clone --recursive https://github.com/stereolabs/zed-ros2-wrapper.git && \
+  git clone https://github.com/odriverobotics/ros_odrive.git && \
+  git clone -b $ROS_DISTRO https://github.com/ros-perception/vision_opencv.git && \
+  git clone -b ros2 https://github.com/ros-perception/depthimage_to_laserscan.git
+RUN  sudo apt-get update && sudo apt-get upgrade -y && sudo apt install -y ros-$ROS_DISTRO-foxglove-bridge \
+ros-$ROS_DISTRO-rtabmap-ros ros-$ROS_DISTRO-slam-toolbox
+WORKDIR /home/nvidia/ros2_ws/
+RUN source /opt/ros/${ROS_DISTRO}/install/setup.bash && \
+  rosdep fix-permissions && \ 
+  rosdep update && \
+  rosdep install -y --from-paths src --ignore-src --rosdistro $ROS_DISTRO -r
+RUN sudo apt-get update &&   sudo apt-get upgrade -y &&   sudo apt-get install -y pluginlib-dev  pulseaudio && \
+  sudo rm -rf /var/lib/sudo apt/lists/*
+# Install cython
+#RUN sudo chmod -R 666 /usr/local/lib/python3.10/dist-packages/
+RUN sudo pip install --user -U  Jetson.GPIO && \
+    pip install --user google-cloud-aiplatform empy && \
+    pip uninstall -y em
+# Build the dependencies and the ZED ROS2 Wrapper
+# RUN source /opt/ros/$ROS_DISTRO/setup.bash && \
+#  source /opt/ros/$ROS_DISTRO/install/setup.bash && \
+# colcon build --parallel-workers $(nproc) \
+#  --event-handlers console_direct+ \
+#  --cmake-args ' -DCMAKE_BUILD_TYPE=Release' \
+#  ' -DCMAKE_LIBRARY_PATH=/usr/local/cuda/lib64/stubs' \
+#  ' -DCMAKE_CXX_FLAGS="-Wl,--allow-shlib-undefined"' \
+#  ' --no-warn-unused-cli'
+COPY resources/embeddings.jsonl /opt/ros2/embeddings/
+COPY resources/mmembeddings.jsonl /opt/ros2/mmembeddings/embeddings.jsonl
+COPY resources/s_env.sh /home/nvidia/ros2_ws/
+RUN sudo chmod -R 777 /opt/ros2/
+WORKDIR /home/nvidia/ros2_ws
+
+# Setup environment variabless
+COPY ros_entrypoint_jetson.sh /sbin/ros_entrypoint.sh
+RUN sudo chmod 755 /sbin/ros_entrypoint.sh
