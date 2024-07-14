@@ -1,6 +1,8 @@
 from setuptools import find_packages, setup
+from glob import glob
+import os
 
-package_name = 'riva_asr'
+package_name = 'shimmy_talk'
 
 setup(
     name=package_name,
@@ -10,6 +12,8 @@ setup(
         ('share/ament_index/resource_index/packages',
             ['resource/' + package_name]),
         ('share/' + package_name, ['package.xml']),
+        (os.path.join('share', package_name, 'launch'), glob(os.path.join('launch', '*launch.[pxy][yma]*'))),
+        (os.path.join('share', package_name, 'config'), glob(os.path.join('config', '*.yaml'))),
     ],
     install_requires=['setuptools'],
     zip_safe=True,
@@ -20,10 +24,10 @@ setup(
     tests_require=['pytest'],
     entry_points={
         'console_scripts': [
-            'riva_asr = riva_asr.riva_asr:main',
-            'listener = riva_asr.google_asr_subscriber:main',
-            'walley_listener = riva_asr.walley_asr_subscriber:main',
-            'whisper_asr = riva_asr.whisper_asr:main'
+            'riva_asr = shimmy_talk.riva_asr:main',
+            'listener = shimmy_talk.google_asr_subscriber:main',
+            'walley_listener = shimmy_talk.walley_asr_subscriber:main',
+            'whisper_asr = shimmy_talk.whisper_asr:main'
         ],
     },
 )

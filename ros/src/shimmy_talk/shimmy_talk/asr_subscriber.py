@@ -117,7 +117,7 @@ Some Facts about you can use in context when answering questions:
         return False
     
     def read_input(self,msg):
-        result = self.robot_runner.voice_emb_client.send_request(msg.embedding)
+        result = self.robot_runner.voice_emb_client.send_request(msg.sid_embedding)
         #while not future.done():
         #    time.sleep(0.05)
         self.get_logger().info(result.embeddings[0].metadata)

@@ -17,7 +17,7 @@ class MicroControllerClientAsync(Node):
         self.ledcolor_publisher = self.create_publisher(LedColor, f'{namespace}/ledcolor', 10)
         self.ledpattern_publisher = self.create_publisher(LedPattern, f'{namespace}/ledpattern', 10)
         while not self.cli.wait_for_service(timeout_sec=1.0):
-            self.get_logger().info(f'faiss service {namespace} not available, waiting again...')
+            self.get_logger().info(f'microcontroller service {namespace} not available, waiting again...')
         
     def send_power_request(self):
         power_req = GetPower.Request()

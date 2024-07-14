@@ -1,5 +1,6 @@
 from noaa_sdk import NOAA
 from datetime import datetime
+import json
 
 import vertexai
 
@@ -24,6 +25,7 @@ import sys
 from .image_client import ImageClientAsync
 from .faiss_client import FaissClientAsync
 from .microcontroller_client import MicroControllerClientAsync
+from .shimmy_move_client import ShimmyMoveClientAsync
 
 import io
 import PIL.Image as Image
@@ -45,7 +47,8 @@ class AgentRunner:
         self.image_client = ImageClientAsync()
         self.voice_emb_client = FaissClientAsync()
         self.microcontroller_client = MicroControllerClientAsync()
-        self.image_emb_client = FaissClientAsync("images")
+        self.shimmy_move_client = ShimmyMoveClientAsync()
+        #self.image_emb_client = FaissClientAsync("images")
         vertexai.init(project="lemmingsinthewind", location="us-central1")
         self.image_model = GenerativeModel("gemini-1.5-flash-001",system_instruction=[image_system_instructions])
         self.image_chat = self.image_model.start_chat()
@@ -59,6 +62,26 @@ class AgentRunner:
             "gemini-1.5-flash-001",
             tools=tools,
         )
+        nav_sys_intructions = """you are an expert on ROS 2. Your job is to use NAV2 to move a robot around from place to place or turn a robot around. You will be using geometry_msgs/msg/Pose messages to perform your actions.
+This is what a typical pos message looks like
+
+{
+"position": {
+"x":"X position in meters as float value",
+"y":"Y position in meters as float value",
+"z":"should always be zero"
+},
+"orientation": {
+rpy:["roll angle in radians as float","pitch angle in radians as float","yaw angle in radians as float"]
+}
+}
+for  the rpy values left is positive right is negative.
+only return the message and nothing else."""
+        self.nav_model = GenerativeModel(
+            "gemini-1.5-pro-001",
+            system_instruction=[nav_sys_intructions]
+        )
+        self.nav_chat = self.nav_model.start_chat()
         self.config = {
             "max_output_tokens": 8192,
             "temperature": 1,
@@ -99,10 +122,10 @@ class AgentRunner:
             )
         return part
 
-    def add_voice(self,person,embedding):
+    def add_voice(self,person,embedding,training=False):
         try:
             
-            if person == "unknown":
+            if person == "unknown" and training is False:
                 part = Part.from_function_response(
                 name="remember_voice",
                 response={
@@ -164,6 +187,31 @@ class AgentRunner:
                 },
             )
         return part
+    
+    def move_shimmy(self,command):
+        try:
+            response = self.nav_chat.send_message([command],
+                                    generation_config=self.config,stream=False, safety_settings=self.safety_settings)
+            print("********************")
+            print(response.text.replace("```json","").replace("```",""))
+            pose = json.loads(response.text.replace("```json","").replace("```",""))
+            self.shimmy_move_client.publish_pose(pose)
+            part = Part.from_function_response(
+                name="move_shimmy",
+                response={
+                    "content": {"status":"starting to move"},
+                },
+            )
+        except:
+            logging.error(traceback.format_exc()) 
+            part = Part.from_function_response(
+                name="move_shimmy",
+                response={
+                    "content": {"error":"cannot move robot. "},
+                },
+            )
+        return part
+            
     
     def change_led_pattern(self,pattern):
         try:
@@ -314,7 +362,7 @@ class AgentRunner:
             )
         return part
     
-    def change_voice_volume(self,percentage: float, increase: bool = True):
+    def change_voice_volume(self,percentage: float, increase: bool = True,current_volume: int = 0):
         """
         Adjusts the system volume by a given percentage.
 
@@ -323,19 +371,16 @@ class AgentRunner:
             increase: Whether to increase (True) or decrease (False) the volume.
         """
 
-        # Get current volume using amixer
-        current_volume_output = subprocess.check_output(["amixer", "get", "Master"])
-        current_volume = int(current_volume_output.decode().split()[4].split("%")[0])
-
         # Calculate the adjusted volume
-        adjusted_volume = current_volume + (percentage * current_volume / 100) if increase else current_volume - (percentage * current_volume / 100)
-        adjusted_volume = int(adjusted_volume)
-
-        # Clamp the volume to the valid range (0-100)
-        adjusted_volume = max(0, min(adjusted_volume, 100))
-
-        # Set the new volume using amixer
-        subprocess.run(["amixer", "set", "Master", str(adjusted_volume) + "%"])
+        if increase is True:
+            current_volume += int(percentage*40)
+            if current_volume >= 20:
+                current_volume = 20
+        elif increase is False:
+            current_volume -= int(percentage*30)
+            if current_volume <= -30:
+                current_volume = -30
+        return current_volume
 
 def convert_image(ros_image):
         cv_image = CvBridge().imgmsg_to_cv2(ros_image, "rgb8")
@@ -469,7 +514,7 @@ store_voice_func = FunctionDeclaration(
 
 change_volume_func = FunctionDeclaration(
     name="change_voice_volume",
-        description="Lower or Raise the volume of your speaker using amixer.",
+        description="Lower or Raise the volume of your voice.",
         parameters={
             "type": "object",
             "properties": {
@@ -491,6 +536,22 @@ store_image_func = FunctionDeclaration(
                 "picture_context": {"type": "string", "description": "Any context"},
                 
             },
+        },
+)
+
+move_shimmy = FunctionDeclaration(
+        name="move_around",
+        description="""Move around based on voice commands. Example commands are as follows:
+* Move forward 3 feet.
+* Come back 1 Meter
+* Turn around
+""",
+        parameters={
+            "type": "object",
+            "properties": {
+                "move_instructions": {"type": "string", "description": "The instructions on how to move or navigate"},
+            },
+            "required":["move_instructions"]
         },
 )
 
@@ -527,7 +588,8 @@ robot_agents = Tool(
             change_neopixels_func,
             change_brightness_func,
             get_power_func,
-            change_led_pattern
+            change_led_pattern,
+            move_shimmy
             
         ],
 )

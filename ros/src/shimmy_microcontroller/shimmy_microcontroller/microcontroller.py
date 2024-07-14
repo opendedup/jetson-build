@@ -62,6 +62,7 @@ class MicroControllerrService(Node):
     def tworker(self):
         while True:
             try:
+                time.sleep(10)
                 obj = {"command":"power"}
                 data=json.dumps(obj)
                 data = f"{data}\n"
@@ -70,15 +71,15 @@ class MicroControllerrService(Node):
                     rcv = self.serial_obj.readline()
                 robj = json.loads(rcv)
                 msg = PowerUsage()
-                msg.busvoltage = robj["busvoltage"]
-                msg.shuntvoltage = robj["shuntvoltage"]
-                msg.currentma = robj["current_mA"]
-                msg.powermw = robj["power_mW"]
-                msg.loadvoltage = robj["loadvoltage"]
+                msg.busvoltage = float(robj["busvoltage"])
+                msg.shuntvoltage = float(robj["shuntvoltage"])
+                msg.currentma = float(robj["current_mA"])
+                msg.powermw = int(robj["power_mW"])
+                msg.loadvoltage = float(robj["loadvoltage"])
                 self.power_publisher_.publish(msg)
-                time.sleep(10)
+                
             except:
-                self.get_logger().error('Got an error while reading voltage.')
+                self.get_logger().error('Got an error while reading power info.')
                 self.get_logger().error('%s' % traceback.format_exc())
                 time.sleep(10)
     

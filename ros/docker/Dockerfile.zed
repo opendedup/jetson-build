@@ -69,7 +69,7 @@ RUN source /opt/ros/${ROS_DISTRO}/install/setup.bash && \
 # Install cython
 RUN python3 -m pip install --upgrade cython && \
     pip install -U google-cloud-aiplatform Jetson.GPIO && \
-    pip install empy Adafruit-Blinka adafruit-circuitpython-lsm6ds squaternion && \
+    pip install empy Adafruit-Blinka adafruit-circuitpython-lsm6ds squaternion pyusb click && \
     pip uninstall -y em 
 
 # Build the dependencies and the ZED ROS2 Wrapper

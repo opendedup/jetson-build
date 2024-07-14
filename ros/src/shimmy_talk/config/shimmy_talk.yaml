@@ -1,0 +1,11 @@
+asr_listener:
+  ros__parameters:
+    sound_device: "Sound BlasterX"
+    train_voice: False
+    train_voice_name: "unknown"
+m_service:
+  ros__parameters:
+    serial_device: "/dev/ttyACM0"
+riva_asr:
+  ros__parameters:
+    sound_device: "respeaker"

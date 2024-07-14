@@ -8,6 +8,8 @@ from transformers import Wav2Vec2ForSequenceClassification,Wav2Vec2FeatureExtrac
 import scipy.io.wavfile as wav
 import io
 import numpy as np
+# import torch.nn.functional as F
+# from transformers import AutoModel, AutoTokenizer
 
 class FIFOCache:
     def __init__(self, capacity):
@@ -37,14 +39,17 @@ class EnASRService:
             auth (:obj:`riva.client.auth.Auth`): an instance of :class:`riva.client.auth.Auth` which is used for
                 authentication metadata generation.
         """
-        model_name = "superb/wav2vec2-large-superb-sid"
+        sid_model_name = "superb/wav2vec2-large-superb-sid"
+        ctx_model_name = "Alibaba-NLP/gte-large-en-v1.5"
         self.auth = auth
         self.stub = rasr_srv.RivaSpeechRecognitionStub(self.auth.channel)
         self.fifo = FIFOCache(100)
-        self.feature_extractor = Wav2Vec2FeatureExtractor.from_pretrained(model_name)
-        self.model = Wav2Vec2ForSequenceClassification.from_pretrained(model_name).to("cuda")
+        self.sid_feature_extractor = Wav2Vec2FeatureExtractor.from_pretrained(sid_model_name)
+        self.sid_model = Wav2Vec2ForSequenceClassification.from_pretrained(sid_model_name).to("cuda")
+        # self.ctx_tokenizer = AutoTokenizer.from_pretrained(ctx_model_name)
+        # self.ctx_model = AutoModel.from_pretrained(ctx_model_name, trust_remote_code=True).to("cuda")
     
-    def get_embeddings(self):
+    def get_sid_embeddings(self):
         emb = self.fifo.cache.copy()
         raw_audio_bytes_array = bytearray()
         for b in emb:
@@ -54,20 +59,36 @@ class EnASRService:
         wav.write(buffer, 16000, audio_samples)
        
         input_audio, sample_rate = librosa.load(buffer,  sr=16000)
-        i= self.feature_extractor(input_audio, return_tensors="pt", sampling_rate=sample_rate, padding=True).to("cuda")
+        i= self.sid_feature_extractor(input_audio, return_tensors="pt", sampling_rate=sample_rate, padding=True).to("cuda")
         with torch.no_grad():
-            o= self.model(i.input_values, output_hidden_states=True)
+            o= self.sid_model(i.input_values, output_hidden_states=True)
         emb = o.logits.cpu().detach().numpy().tolist()[0]
         return emb
+    
+    # def get_ctx_embeddings(self,input_text):
+    #     input_texts = [input_text]
+    #     print(input_text)
+    #     batch_dict = self.ctx_tokenizer(input_texts, max_length=8192, padding=True, truncation=True, return_tensors='pt')
+        
+    #     with torch.no_grad():
+    #         outputs =self.ctx_model(**batch_dict)
+    #     emb =  outputs.last_hidden_state[:, 0]
+    #     return emb.detach().numpy().tolist()[0]
         
     def streaming_response_generator(
         self, audio_chunks: Iterable[bytes], streaming_config: rasr.StreamingRecognitionConfig
     ):  
         generator = streaming_request_generator(audio_chunks, streaming_config,self.fifo)
         for response in self.stub.StreamingRecognize(generator, metadata=self.auth.get_auth_metadata()):
-            emb = []
+            sid_emb = []
+            ctx_emb = []
+            txt = ""
+            
             for result in response.results:
+                # txt += result.alternatives[0].transcript
                 if result.is_final == True:
-                   emb = self.get_embeddings()
+                    sid_emb = self.get_sid_embeddings()
+                    # ctx_emb = self.get_ctx_embeddings(txt)
+                    
 
-            yield response,emb
+            yield response,sid_emb,ctx_emb

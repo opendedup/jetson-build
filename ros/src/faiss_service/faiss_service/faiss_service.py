@@ -66,35 +66,39 @@ class EmbeddingService(Node):
         kb = json.loads(msg.metadata)
         mm = np.array([msg.embedding]).astype(np.float32).tolist()
         kb["value"] = mm
-        
         with self.lock:
-            self.json_writer.write(kb)
             ar = np.array(kb["value"]).astype(np.float32)
-            faiss.normalize_L2(ar)
-            self.index.add(ar)
-            del kb["value"]
-            self.db[f'key{self.increment}'] = json.dumps(kb)
-            self.increment +=1
+            self.get_logger().info("in ar= %d dim = %d" %(len(ar[0]),self.dimensions))
+            if len(ar[0]) == self.dimensions:
+                self.json_writer.write(kb)
+                faiss.normalize_L2(ar)
+                self.index.add(ar)
+                del kb["value"]
+                self.db[f'key{self.increment}'] = json.dumps(kb)
+                self.increment +=1
     
     def get_emb(self, request, response):
         ar = np.array([request.embedding]).astype(np.float32)
-        faiss.normalize_L2(ar)
-        _d,_ids = self.index.search(ar,request.k)
-        ids = _ids.tolist()[0]
-        distances = _d.tolist()[0]
         response.embeddings = []
         response.embedding = request.embedding
-        for index, item in enumerate(ids):
-            try:
-                emb = EmbResult()
-                emb.distance = float(distances[index])
-                emb.metadata = self.db[f"key{item}"]
-                
-                response.embeddings.append(emb)
-                self.get_logger().info('Loaded %s items' % (emb.metadata))
-            except:
-                self.get_logger().error('error getting embedding')
-        self.get_logger().info('done')
+        self.get_logger().info("in ar= %d dim = %d" %(len(ar),self.dimensions))
+        if len(ar[0]) == self.dimensions:
+            faiss.normalize_L2(ar)
+            _d,_ids = self.index.search(ar,request.k)
+            ids = _ids.tolist()[0]
+            distances = _d.tolist()[0]
+            
+            for index, item in enumerate(ids):
+                try:
+                    emb = EmbResult()
+                    emb.distance = float(distances[index])
+                    emb.metadata = self.db[f"key{item}"]
+                    
+                    response.embeddings.append(emb)
+                    self.get_logger().debug('Loaded %s items' % (emb.metadata))
+                except:
+                    self.get_logger().error('error getting embedding')
+        self.get_logger().debug('done')
         return response
 
     

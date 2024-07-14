@@ -44,10 +44,16 @@ import queue
 import string
 import time
 
-from .utils import deEmojify, find_audio_device_index
+from .utils import deEmojify, find_audio_device_index, map_emb_distance,current_milli_time
 
 
 from .skills.agents import robot_agents,AgentRunner
+from .services.stream import FIFOCache
+
+import asyncio
+
+from transformers import AutoModel, AutoTokenizer
+import torch
 
 
 
@@ -62,6 +68,9 @@ class GoogleASRSubscriber(Node):
             10)
         self.declare_parameter('sound_device',"miniDSP")
         self.declare_parameter('train_voice',False)
+        self.declare_parameter('auto_response_threshold',0.35)
+        self.declare_parameter('auto_response_timeout',20000)
+        self.declare_parameter('volume_adjust',0)
         self.declare_parameter('voice','en-US-Journey-O')
         self.declare_parameter('train_voice_name','en-US-Journey-O')
         self.declare_parameter('robot_names',["Schimmel", "Schimmy","Shimmy","Shimmel","Shumi","Shimi","Shami","Shiml"])
@@ -94,7 +103,10 @@ Some Facts about you can use in context when answering questions:
         self.tts_service = texttospeech.TextToSpeechClient()
         self.voice_name = self.get_parameter("voice").value
         self.train_voice = self.get_parameter('train_voice').value
+        self.auto_response_threshold = self.get_parameter('auto_response_threshold').value
+        self.auto_response_timeout = self.get_parameter('auto_response_timeout').value
         self.train_voice_name =  self.get_parameter('train_voice_name').value
+        self.volume_adjust=self.get_parameter('volume_adjust').value
         self.voice = texttospeech.VoiceSelectionParams(language_code="en-US",name=self.voice_name)
         self.audio_config = texttospeech.AudioConfig(
             audio_encoding=texttospeech.AudioEncoding.MP3,
@@ -104,6 +116,7 @@ Some Facts about you can use in context when answering questions:
         self.robot_names = self.get_parameter("robot_names").value
         
         self.chat = model.start_chat()
+        self.last_response = current_milli_time()
         self.config = {
             "max_output_tokens": 1024,
             "temperature": 1,
@@ -120,9 +133,9 @@ Some Facts about you can use in context when answering questions:
         
         self.sample_rate_hz = 44100
         sound_device = find_audio_device_index(self.get_parameter("sound_device").value)
-        p = pyaudio.PyAudio()
+        self.p = pyaudio.PyAudio()
         
-        self.stream = p.open(format=p.get_format_from_width(2),
+        self.stream = self.p.open(format=self.p.get_format_from_width(2),
                         channels=1,
                         rate=self.sample_rate_hz,
                         output=True,
@@ -131,10 +144,16 @@ Some Facts about you can use in context when answering questions:
         self.audio_q = queue.Queue()
         self.sound_q = queue.Queue()
         self.robot_runner = AgentRunner()
+        self.emb_cache = FIFOCache(6)
+        self.emb_lock = threading.Lock()
         t = threading.Thread(target=self.tworker)
         t.start()
         t = threading.Thread(target=self.sound_chunker)
         t.start()
+        
+        ctx_model_name = "Alibaba-NLP/gte-large-en-v1.5"
+        self.ctx_tokenizer = AutoTokenizer.from_pretrained(ctx_model_name)
+        self.ctx_model = AutoModel.from_pretrained(ctx_model_name, trust_remote_code=True).to("cuda")
         
         
     def check(self,sentence, words):
@@ -158,20 +177,40 @@ Some Facts about you can use in context when answering questions:
 
         # If all of the words in the array are in the sentence, return True.
         return False
+
+    async def get_shimmy_talk_emb(self,text):
+        emb = self.get_ctx_embeddings([text])
+        with self.emb_lock:
+            self.emb_cache.set(emb[0])
+            
+            
+        
     
     def get_speech(self,text):
         try:
             self.get_logger().info("processing_text %s" % (text))
+            
             text = deEmojify(text)
+            asyncio.run(self.get_shimmy_talk_emb(text))
             input_text = texttospeech.SynthesisInput(text=text)
             response = self.tts_service.synthesize_speech(
                 input=input_text, voice=self.voice, audio_config=self.audio_config
             )
-            npa = convert_mp3(response.audio_content)
+            npa = convert_mp3(response.audio_content,volume_adjust=self.volume_adjust)
             return npa
         except:
             self.get_logger().error("an error occured")
-            print(traceback.format_exc()) 
+            print(traceback.format_exc())
+            
+    def get_ctx_embeddings(self,input_texts):
+        
+        self.get_logger().info("emb %s" % (input_texts[0]))
+        batch_dict = self.ctx_tokenizer(input_texts, max_length=8192, padding=True, truncation=True, return_tensors='pt').to("cuda")
+        
+        with torch.no_grad():
+            outputs =self.ctx_model(**batch_dict)
+        emb =  outputs.last_hidden_state[:, 0]
+        return emb.cpu().detach().numpy().tolist()
     
     def read_input(self,msg):
         
@@ -181,14 +220,15 @@ Some Facts about you can use in context when answering questions:
         
         person = "unknown"
         distance = 1600
-        if len(msg.embedding) > 0:
-            result = self.robot_runner.voice_emb_client.send_request(msg.embedding)
+        if len(msg.sid_embedding) > 0:
+            result = self.robot_runner.voice_emb_client.send_request(msg.sid_embedding)
             if len(result.embeddings) > 0:
                 emb = result.embeddings[0]
                 self.get_logger().info(result.embeddings[0].metadata)
                 metadata = json.loads(emb.metadata)
                 person  = metadata["name"]
                 distance = emb.distance
+        self.get_logger().info("Person %s match is %d" %(person,distance))
         if distance < 1500 and person == self.voice_name:
             self.get_logger().info("Ignoring %s match is %d" %(person,distance))
         else:
@@ -198,9 +238,11 @@ Some Facts about you can use in context when answering questions:
             self.get_logger().info(person)
             responses = self.chat.send_message(f"{person} - \"{msg.chat_text}\"",
                                     generation_config=self.config,stream=True, safety_settings=self.safety_settings)
-            self.parse_responses(responses)
+            self.parse_responses(responses,msg.sid_embedding,person)
             
-    def parse_responses(self,responses):
+            
+            
+    def parse_responses(self,responses,emb,person):
         api_parts =[]
         while responses is not None:
             
@@ -228,6 +270,9 @@ Some Facts about you can use in context when answering questions:
                     api_part = self.robot_runner.change_brightness(brightness)
                 elif response.candidates[0].content.parts[0].function_call.name == "get_power":
                     api_part = self.robot_runner.get_power()
+                elif response.candidates[0].content.parts[0].function_call.name == "move_around":
+                    command =response.candidates[0].content.parts[0].function_call.args["move_instructions"]
+                    api_part = self.robot_runner.move_shimmy(command)
                 elif response.candidates[0].content.parts[0].function_call.name == "change_led_pattern":
                     pattern =response.candidates[0].content.parts[0].function_call.args["pattern"]
                     api_part = self.robot_runner.change_led_pattern(pattern)
@@ -236,13 +281,27 @@ Some Facts about you can use in context when answering questions:
                     api_part = self.robot_runner.get_current_time(time_zone)
                 elif response.candidates[0].content.parts[0].function_call.name == "remember_voice":
                     person =response.candidates[0].content.parts[0].function_call.args["name"]
-                    api_part = self.robot_runner.add_voice(person,result.embedding)
+                    api_part = self.robot_runner.add_voice(person,emb)
                 elif response.candidates[0].content.parts[0].function_call.name == "change_voice_volume":
                     volume_percent = .10
                     if "volume_percent" in response.candidates[0].content.parts[0].function_call.args:
                         volume_percent =response.candidates[0].content.parts[0].function_call.args["volume_percent"]
                     increase_volume =response.candidates[0].content.parts[0].function_call.args["increase_volume"]
-                    api_part = self.robot_runner.change_voice_volume(volume_percent,increase_volume)
+                    nvol = self.robot_runner.change_voice_volume(volume_percent,increase_volume,self.volume_adjust)
+                    dvol = self.volume_adjust - nvol
+                    msg = f"volume was ajusted by {dvol} dB"
+                    if nvol == self.volume_adjust  and nvol > 0:
+                        msg = f"volume is already at its maximum"
+                    if nvol == self.volume_adjust  and nvol < 0:
+                        msg = f"volume is already at its minimum"
+                    self.volume_adjust = nvol
+                    api_part = Part.from_function_response(
+                        name=msg,
+                        response={
+                            "content": "success",
+                        },
+                    )
+                    self.get_logger().info("Volume = %d" %(self.volume_adjust))
                 elif response.candidates[0].content.parts[0].function_call.name == "use_robot_eyes":
                     req = additional_context =response.candidates[0].content.parts[0].function_call.args["user_request"]
                     prompt = f"{person} - {req}"
@@ -266,7 +325,8 @@ Some Facts about you can use in context when answering questions:
             n_responses = self.chat.send_message(
                         api_parts,generation_config=self.config,stream=True, safety_settings=self.safety_settings
             )
-            self.parse_responses(n_responses)
+            self.parse_responses(n_responses,emb,person)
+            
             
     
     def sound_chunker(self):
@@ -283,6 +343,7 @@ Some Facts about you can use in context when answering questions:
                 while data != b'':
                     self.stream.write(data)
                     data = wf.readframes(block_size)
+                self.last_response = current_milli_time()
             except queue.Empty:
                 time.sleep(0.05)
             except Exception as e:
@@ -328,20 +389,33 @@ Some Facts about you can use in context when answering questions:
     
 
     def listener_callback(self, msg):
-        self.get_logger().debug('I heard: "%s"' % msg.chat_text)
-        if len(msg.embedding) > 0 and self.train_voice == True:
-                self.robot_runner.add_voice(self.train_voice_name,msg.embedding)
+        self.get_logger().info('I heard: "%s"' % msg.chat_text)
+        if len(msg.sid_embedding) > 0 and self.train_voice == True:
+                self.robot_runner.add_voice(self.train_voice_name,msg.sid_embedding,training=True)
                 self.get_logger().info('Training  %s' % self.train_voice_name)
-        if self.check(msg.chat_text,self.robot_names):
+        emb = self.get_ctx_embeddings([msg.chat_text])[0]
+        cont_convo = False
+        with self.emb_lock:
+            ct = current_milli_time()
+            if len(self.emb_cache.cache) > 0 and (ct - self.last_response) < self.auto_response_timeout:
+                
+                mp = map_emb_distance(emb=emb,cache_emb=self.emb_cache.cache)
+                print(mp)
+                if(min(mp)<self.auto_response_threshold) and min(mp)>0.03:
+                    cont_convo = True
+                
+        if cont_convo is True or self.check(msg.chat_text,self.robot_names):
             threading.Thread(target=self.read_input, args=[msg]).start()
             
 
 
 
-def convert_mp3(data, normalized=False):
+def convert_mp3(data, normalized=False,volume_adjust=0):
     """MP3 to numpy array"""
     sound = AudioSegment.from_file(io.BytesIO(data), format="mp3")
     sound = sound.set_frame_rate(44100)
+    if volume_adjust != 0:
+        sound = sound + volume_adjust
     samples = np.array(sound.get_array_of_samples())
     if sound.channels == 2:
         samples = samples.reshape((-1, 2))
@@ -384,7 +458,9 @@ def main(args=None):
     executor.add_node(riva_subscriber)
 
     executor.spin()
-
+    riva_subscriber.streams.stop_stream()    # "Stop Audio Recording
+    riva_subscriber.streams.close()          # "Close Audio Recording
+    riva_subscriber.p.close()
     executor.shutdown()
     rclpy.shutdown()
 

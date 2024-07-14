@@ -1,13 +1,11 @@
 <?xml version="1.0"?>
 <?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
 <package format="3">
-  <name>riva_asr</name>
+  <name>shimmy_move</name>
   <version>0.0.0</version>
-  <description>TODO: Package description</description>
-  <maintainer email="sam.silverberg@gmail.com">nvidia</maintainer>
-  <license>Apache-2.0</license>
-  <exec_depend>rclpy</exec_depend>
-  <exec_depend>std_msgs</exec_depend>
+  <description>Move Shimmy around based on Pos message instructions</description>
+  <maintainer email="sam.silverberg@gmail.com">Sam Silverberg</maintainer>
+  <license>TODO: License declaration</license>
 
   <test_depend>ament_copyright</test_depend>
   <test_depend>ament_flake8</test_depend>

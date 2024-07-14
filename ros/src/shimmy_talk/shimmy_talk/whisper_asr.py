@@ -2,6 +2,8 @@ import rclpy
 from rclpy.node import Node
 from chat_interfaces.msg import Chat
 
+import traceback
+
 import queue
 import threading
 
@@ -16,8 +18,7 @@ from dataclasses import dataclass
 from contextlib import contextmanager
 from typing import Optional
 from whisper_trt.vad import load_vad
-from whisper_trt.model import load_trt_model
-
+from .utils import find_audio_device_index
 import torch
 from transformers import Wav2Vec2ForSequenceClassification,Wav2Vec2FeatureExtractor
 
@@ -102,16 +103,16 @@ class Microphone(Process):
     def __init__(self, 
                  output_queue: Queue, 
                  chunk_size: int = 1536, 
-                 device_index: int | None = None,
+                 sound_device: str  = "respeaker",
                  use_channel: int = 0, 
-                 num_channels: int = 6,
+                 num_channels: int = 1,
                  sample_rate: int = 16000):
         super().__init__()
         self.output_queue = output_queue
         self.chunk_size = chunk_size
         self.use_channel = use_channel
         self.num_channels = num_channels
-        self.device_index = device_index
+        self.device_index = find_audio_device_index(sound_device)
         self.sample_rate = sample_rate
 
     def run(self):
@@ -300,38 +301,40 @@ class WhisperASRPublisher(Node):
 
 
     def lworker(self):
-        audio_chunks = Queue()
-        speech_segments = Queue()
-        output_queue = Queue()
-        vad_ready = Event()
-        asr_ready = Event()
-        speech_start = Event()
-        speech_end = Event()
+        try:
+            audio_chunks = Queue()
+            speech_segments = Queue()
+            output_queue = Queue()
+            vad_ready = Event()
+            asr_ready = Event()
+            speech_start = Event()
+            speech_end = Event()
 
 
-        asr = ASR("base.en", "whisper_trt", speech_segments,output_queue, ready_flag=asr_ready)
+            asr = ASR("base.en", "whisper_trt", speech_segments,output_queue, ready_flag=asr_ready)
 
-        vad = VAD(audio_chunks, speech_segments, max_filter_window=10, ready_flag=vad_ready, speech_start_flag=speech_start, speech_end_flag=speech_end)
+            vad = VAD(audio_chunks, speech_segments, max_filter_window=10, ready_flag=vad_ready, speech_start_flag=speech_start, speech_end_flag=speech_end)
 
-        mic = Microphone(audio_chunks)
-        mon = StartEndMonitor(speech_start, speech_end)
+            mic = Microphone(audio_chunks)
+            mon = StartEndMonitor(speech_start, speech_end)
 
-        vad.start()
-        asr.start()
-        mon.start()
+            vad.start()
+            asr.start()
+            mon.start()
 
-        vad_ready.wait()
-        asr_ready.wait()
+            vad_ready.wait()
+            asr_ready.wait()
 
-        mic.start()
-        while True:
-            item = output_queue.get()
-            msg = Chat()
-            msg.chat_text = item["text"]
-            msg.embedding = item["emb"]
-            self.publisher_.publish(msg)
-            self.get_logger().info('Publishing: "%s"' % msg.chat_text)
-
+            mic.start()
+            while True:
+                item = output_queue.get()
+                msg = Chat()
+                msg.chat_text = item["text"]
+                msg.sid_embedding = item["emb"]
+                self.publisher_.publish(msg)
+                self.get_logger().info('Publishing: "%s"' % msg.chat_text)
+        except:
+            self.get_logger().error('%s' % traceback.format_exc())
         
         
 
