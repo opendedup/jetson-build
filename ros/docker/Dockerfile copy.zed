@@ -111,10 +111,10 @@ RUN sudo pip install --user -U  Jetson.GPIO && \
 #  ' -DCMAKE_LIBRARY_PATH=/usr/local/cuda/lib64/stubs' \
 #  ' -DCMAKE_CXX_FLAGS="-Wl,--allow-shlib-undefined"' \
 #  ' --no-warn-unused-cli'
-COPY resources/embeddings.jsonl /opt/ros2/embeddings/
-COPY resources/mmembeddings.jsonl /opt/ros2/mmembeddings/embeddings.jsonl
+COPY resources/embeddings.jsonl /opt/shimmy/embeddings/
+COPY resources/mmembeddings.jsonl /opt/shimmy/mmembeddings/embeddings.jsonl
 COPY resources/s_env.sh /home/nvidia/ros2_ws/
-RUN sudo chmod -R 777 /opt/ros2/
+RUN sudo chmod -R 777 /opt/shimmy/
 WORKDIR /home/nvidia/ros2_ws
 
 # Setup environment variabless

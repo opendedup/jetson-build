@@ -82,9 +82,18 @@ colcon build --parallel-workers $(nproc) \
 ' -DCMAKE_CXX_FLAGS="-Wl,--allow-shlib-undefined"' \
 ' --no-warn-unused-cli' "
 
-COPY resources/embeddings.jsonl /opt/ros2/embeddings/
-COPY resources/mmembeddings.jsonl /opt/ros2/mmembeddings/embeddings.jsonl
+COPY resources/embeddings.jsonl /opt/shimmy/embeddings/
+COPY resources/mmembeddings.jsonl /opt/shimmy/mmembeddings/embeddings.jsonl
 COPY resources/s_env.sh /root/ros2_ws/
+
+WORKDIR /root
+
+ADD https://api.github.com/repos/NVIDIA-AI-IOT/whisper_trt/git/refs/heads/main /tmp/whisper_trt_version.json
+    
+RUN pip3 install --no-cache-dir --verbose openai-whisper && \
+    git clone https://github.com/NVIDIA-AI-IOT/whisper_trt /opt/whisper_trt && \
+    cd /opt/whisper_trt && \
+    pip3 install -e .
 
 WORKDIR /root/ros2_ws
 

@@ -20,6 +20,7 @@ import vertexai
 from vertexai.preview.generative_models import (
     GenerativeModel,
     Part,
+    Tool,
 )
 import vertexai.preview.generative_models as generative_models
 
@@ -44,7 +45,7 @@ import queue
 import string
 import time
 
-from .utils import deEmojify, find_audio_device_index, map_emb_distance,current_milli_time
+from .utils import deEmojify, find_audio_device_index, map_emb_distance,current_milli_time,quaternion_to_rpy,extract_text_from_dict
 
 
 from .skills.agents import robot_agents,AgentRunner
@@ -55,7 +56,11 @@ import asyncio
 from transformers import AutoModel, AutoTokenizer
 import torch
 
+from geometry_msgs.msg import PoseStamped
+from datetime import datetime
 
+import logging
+from logging.handlers import RotatingFileHandler
 
 class GoogleASRSubscriber(Node):
 
@@ -70,10 +75,11 @@ class GoogleASRSubscriber(Node):
         self.declare_parameter('train_voice',False)
         self.declare_parameter('auto_response_threshold',0.35)
         self.declare_parameter('auto_response_timeout',20000)
-        self.declare_parameter('volume_adjust',0)
+        self.declare_parameter('volume_adjust',-10)
         self.declare_parameter('voice','en-US-Journey-O')
         self.declare_parameter('train_voice_name','en-US-Journey-O')
-        self.declare_parameter('robot_names',["Schimmel", "Schimmy","Shimmy","Shimmel","Shumi","Shimi","Shami","Shiml"])
+        self.declare_parameter('transcript_file','/opt/shimmy/transcript.log')
+        self.declare_parameter('robot_names',["Jimmy","Schimmel", "Schimmy","Shimmy","Shimmel","Shumi","Shimi","Shami","Shiml"])
         self.declare_parameter('prompt',"""Your name is Shimmy, which is short for Schimmel.
 Some Facts about you can use in context when answering questions:
     * You live with a family of 6 people.
@@ -83,7 +89,7 @@ Some Facts about you can use in context when answering questions:
     * Your favorites are as follows:
         * basketball team is the Trail Blazers
         * baseball is the Giants
-        * rum rasin icecream
+        * rum rasin ice cream
         * rasin bran cerial
     * Here are some interesting facts about your body:
         * 320mm wide
@@ -107,12 +113,14 @@ Some Facts about you can use in context when answering questions:
         self.auto_response_timeout = self.get_parameter('auto_response_timeout').value
         self.train_voice_name =  self.get_parameter('train_voice_name').value
         self.volume_adjust=self.get_parameter('volume_adjust').value
+        self.transcript_file = self.get_parameter('transcript_file').value
         self.voice = texttospeech.VoiceSelectionParams(language_code="en-US",name=self.voice_name)
         self.audio_config = texttospeech.AudioConfig(
             audio_encoding=texttospeech.AudioEncoding.MP3,
         )
         vertexai.init(project="lemmingsinthewind", location="us-central1")
-        model = GenerativeModel("gemini-1.5-flash-001",tools=[robot_agents],system_instruction=[self.get_parameter("prompt").value])
+        model = GenerativeModel("gemini-1.5-flash-001",tools=[Tool(
+        function_declarations=robot_agents)],system_instruction=[self.get_parameter("prompt").value])
         self.robot_names = self.get_parameter("robot_names").value
         
         self.chat = model.start_chat()
@@ -143,21 +151,34 @@ Some Facts about you can use in context when answering questions:
         self.text_q = queue.Queue()
         self.audio_q = queue.Queue()
         self.sound_q = queue.Queue()
-        self.robot_runner = AgentRunner()
+        self.robot_runner = AgentRunner(image_system_instructions=self.get_parameter("prompt").value)
         self.emb_cache = FIFOCache(6)
         self.emb_lock = threading.Lock()
+        self.transcript_logger = logging.getLogger("transcript")
+        handler = RotatingFileHandler(self.transcript_file, maxBytes=10000000, backupCount=2)
+        formatter = logging.Formatter('At %(asctime)s - %(message)s')
+        handler.setFormatter(formatter)
+        self.transcript_logger.addHandler(handler)
         t = threading.Thread(target=self.tworker)
         t.start()
         t = threading.Thread(target=self.sound_chunker)
         t.start()
-        
         ctx_model_name = "Alibaba-NLP/gte-large-en-v1.5"
         self.ctx_tokenizer = AutoTokenizer.from_pretrained(ctx_model_name)
         self.ctx_model = AutoModel.from_pretrained(ctx_model_name, trust_remote_code=True).to("cuda")
+        self.agent_emb = {}
+        for agent in robot_agents:
+            dct = agent.to_dict()
+            self.agent_emb[dct["name"]] = self.get_ctx_embeddings([extract_text_from_dict(dct)])[0]   
+ 
+    def append_to_file(self,text,person):
+        if person.startswith(self.voice_name):
+            person = "Shimmy the robot"
+        text = f"{person} said \"{text}\""
+        self.transcript_logger.info(text)
         
-        
+
     def check(self,sentence, words):
-        self.get_logger().info(sentence)
         """
         Check if an array of words are in a sentence.
 
@@ -204,7 +225,6 @@ Some Facts about you can use in context when answering questions:
             
     def get_ctx_embeddings(self,input_texts):
         
-        self.get_logger().info("emb %s" % (input_texts[0]))
         batch_dict = self.ctx_tokenizer(input_texts, max_length=8192, padding=True, truncation=True, return_tensors='pt').to("cuda")
         
         with torch.no_grad():
@@ -212,30 +232,20 @@ Some Facts about you can use in context when answering questions:
         emb =  outputs.last_hidden_state[:, 0]
         return emb.cpu().detach().numpy().tolist()
     
-    def read_input(self,msg):
-        
-        
+    def read_input(self,msg,person,distance):
         #while not future.done():
         #    time.sleep(0.05)
-        
-        person = "unknown"
-        distance = 1600
-        if len(msg.sid_embedding) > 0:
-            result = self.robot_runner.voice_emb_client.send_request(msg.sid_embedding)
-            if len(result.embeddings) > 0:
-                emb = result.embeddings[0]
-                self.get_logger().info(result.embeddings[0].metadata)
-                metadata = json.loads(emb.metadata)
-                person  = metadata["name"]
-                distance = emb.distance
+
         self.get_logger().info("Person %s match is %d" %(person,distance))
-        if distance < 1500 and person == self.voice_name:
+        
+        if distance < 1500 and person.startswith(self.voice_name):
             self.get_logger().info("Ignoring %s match is %d" %(person,distance))
         else:
             if distance > 1500:
                 self.get_logger().info(str(distance))
                 person = "unknown"
             self.get_logger().info(person)
+            asyncio.run(self.get_shimmy_talk_emb(msg.chat_text))
             responses = self.chat.send_message(f"{person} - \"{msg.chat_text}\"",
                                     generation_config=self.config,stream=True, safety_settings=self.safety_settings)
             self.parse_responses(responses,msg.sid_embedding,person)
@@ -252,37 +262,45 @@ Some Facts about you can use in context when answering questions:
                 # if response.candidates[0].finish_reason.name != "FINISH_REASON_UNSPECIFIED":
                 #     self.get_logger().info("done= %s" % response.candidates[0].finish_reason)
                 #     break
-                if response.candidates[0].content.parts[0].function_call.name == "use_web_browser":
+                fcmd = response.candidates[0].content.parts[0].function_call.name
+                if fcmd is not None and len(fcmd) > 0 :
+                    self.emb_cache.set(self.agent_emb[fcmd])
+                if fcmd == "use_web_browser":
                     context = response.candidates[0].content.parts[0].function_call.args["search_txt"]
                     api_part = self.robot_runner.use_web(context)
                     self.get_logger().info("web API_PART = %s" % (api_part))
-                elif response.candidates[0].content.parts[0].function_call.name == "get_weather":
-                    lat =response.candidates[0].content.parts[0].function_call.args["latitude"]
-                    lon =response.candidates[0].content.parts[0].function_call.args["longitude"]
-                    api_part = self.robot_runner.get_weather(lat,lon)
-                elif response.candidates[0].content.parts[0].function_call.name == "change_led_color":
+                elif fcmd == "change_led_color":
                     red =response.candidates[0].content.parts[0].function_call.args["red"]
                     green =response.candidates[0].content.parts[0].function_call.args["green"]
                     blue =response.candidates[0].content.parts[0].function_call.args["blue"]
                     api_part = self.robot_runner.change_led_color(red,green,blue)
-                elif response.candidates[0].content.parts[0].function_call.name == "change_brightness":
+                elif fcmd == "change_brightness":
                     brightness =response.candidates[0].content.parts[0].function_call.args["brightness"]
                     api_part = self.robot_runner.change_brightness(brightness)
-                elif response.candidates[0].content.parts[0].function_call.name == "get_power":
+                elif fcmd == "get_power":
                     api_part = self.robot_runner.get_power()
-                elif response.candidates[0].content.parts[0].function_call.name == "move_around":
+                elif fcmd == "move_around":
                     command =response.candidates[0].content.parts[0].function_call.args["move_instructions"]
                     api_part = self.robot_runner.move_shimmy(command)
-                elif response.candidates[0].content.parts[0].function_call.name == "change_led_pattern":
+                elif fcmd == "change_led_pattern":
                     pattern =response.candidates[0].content.parts[0].function_call.args["pattern"]
                     api_part = self.robot_runner.change_led_pattern(pattern)
-                elif response.candidates[0].content.parts[0].function_call.name == "get_time":
+                elif fcmd == "get_time":
                     time_zone =response.candidates[0].content.parts[0].function_call.args["time_zone"]
                     api_part = self.robot_runner.get_current_time(time_zone)
-                elif response.candidates[0].content.parts[0].function_call.name == "remember_voice":
+                elif fcmd == "remember_voice":
                     person =response.candidates[0].content.parts[0].function_call.args["name"]
-                    api_part = self.robot_runner.add_voice(person,emb)
-                elif response.candidates[0].content.parts[0].function_call.name == "change_voice_volume":
+                    if person not in self.robot_names:
+                        api_part = self.robot_runner.add_voice(person,emb)
+                    else:
+                        api_part = Part.from_function_response(
+                        name="remember_voice",
+                        response={
+                           "content": {"user_name":person},
+                        }
+                        )
+                        
+                elif fcmd == "change_voice_volume":
                     volume_percent = .10
                     if "volume_percent" in response.candidates[0].content.parts[0].function_call.args:
                         volume_percent =response.candidates[0].content.parts[0].function_call.args["volume_percent"]
@@ -302,7 +320,7 @@ Some Facts about you can use in context when answering questions:
                         },
                     )
                     self.get_logger().info("Volume = %d" %(self.volume_adjust))
-                elif response.candidates[0].content.parts[0].function_call.name == "use_robot_eyes":
+                elif fcmd == "use_robot_eyes":
                     req = additional_context =response.candidates[0].content.parts[0].function_call.args["user_request"]
                     prompt = f"{person} - {req}"
                     if "additional_context" in response.candidates[0].content.parts[0].function_call.args:
@@ -310,8 +328,13 @@ Some Facts about you can use in context when answering questions:
                         prompt +=f"\n*** Additional Context ***\n{additional_context}"
                     api_part = self.robot_runner.get_image(prompt)
                     self.get_logger().info("API_PART = %s" % (api_part))
+                elif fcmd == "find_object_with_eyes":
                     
-                elif response.candidates[0].content.parts[0].function_call.name == "remember_image_objects":
+                    req = additional_context =response.candidates[0].content.parts[0].function_call.args["object"]
+        
+                    api_part = self.robot_runner.find_object(req)
+                    self.get_logger().info("API_PART = %s" % (api_part))
+                elif fcmd == "remember_image_objects":
                     api_part = self.robot_runner.remember_image_objects(response.candidates[0].content.parts[0].function_call.args["picture_context"])
                 elif len(response.candidates[0].content.parts[0].text) > 0:
                         self.text_q.put(response.candidates[0].content.parts[0].text)
@@ -400,12 +423,28 @@ Some Facts about you can use in context when answering questions:
             if len(self.emb_cache.cache) > 0 and (ct - self.last_response) < self.auto_response_timeout:
                 
                 mp = map_emb_distance(emb=emb,cache_emb=self.emb_cache.cache)
-                print(mp)
                 if(min(mp)<self.auto_response_threshold) and min(mp)>0.03:
                     cont_convo = True
-                
+        person = "unknown"
+        distance = 1600
+        if len(msg.sid_embedding) > 0:
+            result = self.robot_runner.voice_emb_client.send_request(msg.sid_embedding)
+            if len(result.embeddings) > 0:
+                emb = result.embeddings[0]
+                self.get_logger().info(result.embeddings[0].metadata)
+                metadata = json.loads(emb.metadata)
+                person  = metadata["name"]
+                distance = emb.distance
+            if distance > 1500:
+                person = "unknown"
+        fpp = str(person)
+        
+        if distance < 1500 and person.startswith(self.voice_name):
+            fpp = "Shimmy the Robot"
+        self.append_to_file(msg.chat_text,fpp)
         if cont_convo is True or self.check(msg.chat_text,self.robot_names):
-            threading.Thread(target=self.read_input, args=[msg]).start()
+            
+            threading.Thread(target=self.read_input, args=[msg,person,distance]).start()
             
 
 

@@ -40,6 +40,7 @@ from vertexai.generative_models import (
     Tool
 )
 import vertexai.preview.generative_models as generative_models
+import re
 
 
 class AgentRunner:
@@ -62,26 +63,6 @@ class AgentRunner:
             "gemini-1.5-flash-001",
             tools=tools,
         )
-        nav_sys_intructions = """you are an expert on ROS 2. Your job is to use NAV2 to move a robot around from place to place or turn a robot around. You will be using geometry_msgs/msg/Pose messages to perform your actions.
-This is what a typical pos message looks like
-
-{
-"position": {
-"x":"X position in meters as float value",
-"y":"Y position in meters as float value",
-"z":"should always be zero"
-},
-"orientation": {
-rpy:["roll angle in radians as float","pitch angle in radians as float","yaw angle in radians as float"]
-}
-}
-for  the rpy values left is positive right is negative.
-only return the message and nothing else."""
-        self.nav_model = GenerativeModel(
-            "gemini-1.5-pro-001",
-            system_instruction=[nav_sys_intructions]
-        )
-        self.nav_chat = self.nav_model.start_chat()
         self.config = {
             "max_output_tokens": 8192,
             "temperature": 1,
@@ -190,12 +171,7 @@ only return the message and nothing else."""
     
     def move_shimmy(self,command):
         try:
-            response = self.nav_chat.send_message([command],
-                                    generation_config=self.config,stream=False, safety_settings=self.safety_settings)
-            print("********************")
-            print(response.text.replace("```json","").replace("```",""))
-            pose = json.loads(response.text.replace("```json","").replace("```",""))
-            self.shimmy_move_client.publish_pose(pose)
+            self.shimmy_move_client.publish_pose(command)
             part = Part.from_function_response(
                 name="move_shimmy",
                 response={
@@ -256,15 +232,11 @@ only return the message and nothing else."""
 
     def get_image(self,text_req):
         try:
-            response = self.image_client.send_request()
-            buffered = convert_image(response.image)
-            ipart = Part.from_data(data=buffered.getvalue(),mime_type="image/jpeg")
-            response = self.image_chat.send_message([text_req,ipart],
-                                    generation_config=self.config,stream=False, safety_settings=self.safety_settings)
+            rtxt = self.image_client.get_image(text_req)
             part = Part.from_function_response(
                 name="use_robot_eyes",
                 response={
-                    "content": {"description":response.text},
+                    "content": {"description":rtxt},
                 },
             )
             
@@ -272,6 +244,28 @@ only return the message and nothing else."""
             logging.error(traceback.format_exc()) 
             part = Part.from_function_response(
                 name="use_robot_eyes",
+                response={
+                    "content": {"error":"cannot get image info at this time"},
+                },
+            )
+        return part
+    
+    def find_object(self,text_req):
+        try:
+            rtxt = self.image_client.get_bounding_box(text_req)
+            self.shimmy_move_client.publish_pose(f"move forward by {rtxt[2]} meters and to the right by {rtxt[0]} meters")
+            print(rtxt)
+            part = Part.from_function_response(
+                name="find_object_with_eyes",
+                response={
+                    "content": {"description":f"{text_req} found about {rtxt[2]} meters in front. Moving to {text_req}"},
+                },
+            )
+            
+        except:
+            logging.error(traceback.format_exc()) 
+            part = Part.from_function_response(
+                name="find_object_with_eyes",
                 response={
                     "content": {"error":"cannot get image info at this time"},
                 },
@@ -382,17 +376,7 @@ only return the message and nothing else."""
                 current_volume = -30
         return current_volume
 
-def convert_image(ros_image):
-        cv_image = CvBridge().imgmsg_to_cv2(ros_image, "rgb8")
-        img_array = np.array(cv_image)
-        img_pil = Image.fromarray(img_array)
-        buffered = io.BytesIO()
-        base_width= 720
-        wpercent = (base_width / float(img_pil.size[0]))
-        hsize = int((float(img_pil.size[1]) * float(wpercent)))
-        img_pil = img_pil.resize((base_width, hsize))
-        img_pil.save(buffered, format="JPEG")
-        return buffered
+
 
 def convert_string_array_to_float_array(string_array):
     """Converts a string array to a float array using a ternary expression.
@@ -426,7 +410,7 @@ get_time_func = FunctionDeclaration(
 change_neopixels_func = FunctionDeclaration(
             name="change_led_color",
             description="""Change the color of the rgb neopixel display on the front of your body. You can use this to turn on the display, change the color of the display, or turn off the display. 
-            * If you want to turn off the display make red,green, and blue all 0.
+            * If you want to turn off the display make red,green, and blue all 0. You can also use this to show your emotions as well like blush by turning red, happy as blue.
             * If you want the color yellow red = 255, green=255, blue=0""",
             # Function parameters are specified in OpenAPI JSON schema format
             parameters={
@@ -455,7 +439,7 @@ change_brightness_func = FunctionDeclaration(
 
 change_led_pattern = FunctionDeclaration(
             name="change_led_pattern",
-            description="""Change the pattern for the neopixel array on the robot.""",
+            description="""Change the pattern for the neopixel array on the robot. """,
             # Function parameters are specified in OpenAPI JSON schema format
             parameters={
                 "type": "object",
@@ -494,6 +478,26 @@ This function can be used for anything that requires eyes or a camera including:
                     "additional_context": {"type": "string", "description": "Any context from the conversation history that may be useful when analyzing what you see."},
                 },
                 "required" : ["user_request"],
+            },
+
+    )
+
+find_object_function = FunctionDeclaration(
+            name="find_object_with_eyes",
+            description="""Use your camera to take a pictures of surroundings and locate an object in the image. 
+This function can be used to find anything in the field of view such as:
+* Find an apple on the floor
+* Find people in a room
+* Locate a book on a desk
+""",
+            # Function parameters are specified in OpenAPI JSON schema format
+            parameters={
+                "type": "object",
+                "properties": {
+                    "object": {"type": "string", "description": "The object to locate in the field of view."},
+                    "additional_context": {"type": "string", "description": "Any context from the conversation history that may be useful when analyzing what you see."},
+                },
+                "required" : ["object"],
             },
 
     )
@@ -578,8 +582,13 @@ google_search_tool = Tool.from_google_search_retrieval(
     google_search_retrieval=grounding.GoogleSearchRetrieval(disable_attribution=False)
 )
 
-robot_agents = Tool(
-        function_declarations=[
+
+
+
+
+
+
+robot_agents = [
             get_time_func,
             store_voice_func,
             take_picture_function,
@@ -589,8 +598,8 @@ robot_agents = Tool(
             change_brightness_func,
             get_power_func,
             change_led_pattern,
-            move_shimmy
+            move_shimmy,
+            find_object_function
             
-        ],
-)
+        ]
 

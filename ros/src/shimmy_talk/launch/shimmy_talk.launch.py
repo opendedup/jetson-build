@@ -36,7 +36,7 @@ def launch_setup(context, *args, **kwargs):
             output='both',
             parameters=[
                 {"dimensions": 1408,
-                 "embeddings_path":"/opt/ros2/mmembeddings/"}
+                 "embeddings_path":"/opt/shimmy/mmembeddings/"}
             ]
         )
     
@@ -51,11 +51,12 @@ def launch_setup(context, *args, **kwargs):
     
     riva_asr = Node(
             package='shimmy_talk',
-            executable='whisper_asr',
-            name='whisper_asr',
+            executable='riva_asr',
+            name='riva_asr',
             output='both',
             parameters=[config]
         )
+    
     asr_listener = Node(
             package='shimmy_talk',
             executable='listener',
@@ -73,6 +74,7 @@ def launch_setup(context, *args, **kwargs):
             name='image_cap_service',
             remappings=[
             ('/image_raw', '/zed/zed_node/left/image_rect_color'),
+            ('/depth_image_raw', '/zed/zed_node/depth/depth_registered'),
          ]
         )
     
@@ -82,7 +84,7 @@ def launch_setup(context, *args, **kwargs):
         )
     
     return [
-        #foxglove_bridge,
+        foxglove_bridge,
         image_cap_service,
         asr_listener,
         riva_asr,

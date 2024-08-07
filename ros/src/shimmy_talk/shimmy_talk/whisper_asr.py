@@ -21,6 +21,9 @@ from whisper_trt.vad import load_vad
 from .utils import find_audio_device_index
 import torch
 from transformers import Wav2Vec2ForSequenceClassification,Wav2Vec2FeatureExtractor
+from .usb_4_mic_array import Tuning
+import usb.core
+import usb.util
 
 
 def find_respeaker_audio_device_index():
@@ -44,7 +47,7 @@ def find_respeaker_audio_device_index():
 def get_respeaker_audio_stream(
         device_index: Optional[int] = None,
         sample_rate: int = 16000,
-        channels: int = 6,
+        channels: int = 1,
         bitwidth: int = 2
     ):
 
@@ -102,7 +105,7 @@ class Microphone(Process):
 
     def __init__(self, 
                  output_queue: Queue, 
-                 chunk_size: int = 1536, 
+                 chunk_size: int = 1536,#1536,3072 
                  sound_device: str  = "respeaker",
                  use_channel: int = 0, 
                  num_channels: int = 1,
@@ -120,18 +123,21 @@ class Microphone(Process):
                                         device_index=self.device_index, 
                                         channels=self.num_channels) as stream:
             while True:
-                audio_raw = stream.read(self.chunk_size)
-                audio_numpy = audio_numpy_from_bytes(audio_raw)
-                audio_numpy = np.stack([audio_numpy_slice_channel(audio_numpy, i, self.num_channels) for i in range(self.num_channels)])
-                audio_numpy_normalized = audio_numpy_normalize(audio_numpy)
+                try:
+                    audio_raw = stream.read(self.chunk_size)
+                    audio_numpy = audio_numpy_from_bytes(audio_raw)
+                    audio_numpy = np.stack([audio_numpy_slice_channel(audio_numpy, i, self.num_channels) for i in range(self.num_channels)])
+                    audio_numpy_normalized = audio_numpy_normalize(audio_numpy)
 
-                audio = AudioChunk(
-                    audio_raw=audio_raw,
-                    audio_numpy=audio_numpy,
-                    audio_numpy_normalized=audio_numpy_normalized
-                )
+                    audio = AudioChunk(
+                        audio_raw=audio_raw,
+                        audio_numpy=audio_numpy,
+                        audio_numpy_normalized=audio_numpy_normalized
+                    )
 
-                self.output_queue.put(audio)
+                    self.output_queue.put(audio)
+                except:
+                    print(traceback.format_exc())
 
 
 class VAD(Process):
@@ -236,18 +242,21 @@ class ASR(Process):
             from faster_whisper import WhisperModel
             class FasterWhisperWrapper:
                 def __init__(self, model):
+                    self.asr_options_template = {"hotwords": "Shimmy, Shimmel, Schimmel",
+                                "language":"en","initial_prompt":"Shimmy Likes Cheese"}
                     self.model = model
                 def transcribe(self, audio):
-                    segs, info = self.model.transcribe(audio)
+                    segs, info = self.model.transcribe(audio,**self.asr_options_template)
                     text = "".join([seg.text for seg in segs])
                     return {"text": text}
                 
             model = FasterWhisperWrapper(WhisperModel(self.model))
+            
         feature_extractor = Wav2Vec2FeatureExtractor.from_pretrained(self.model_name)
         embmodel = Wav2Vec2ForSequenceClassification.from_pretrained(self.model_name).to("cuda")
+        
         # warmup
         model.transcribe(np.zeros(1536, dtype=np.float32))
-
         if self.ready_flag is not None:
             self.ready_flag.set()
 
@@ -296,6 +305,8 @@ class WhisperASRPublisher(Node):
     def __init__(self):
         super().__init__('whisper_asr_publisher')
         self.publisher_ = self.create_publisher(Chat, 'asr', 10)
+        dev = usb.core.find(idVendor=0x2886, idProduct=0x0018)
+        self.r_mic = Tuning(dev)
         t = threading.Thread(target=self.lworker)
         t.start()
 
@@ -311,7 +322,7 @@ class WhisperASRPublisher(Node):
             speech_end = Event()
 
 
-            asr = ASR("base.en", "whisper_trt", speech_segments,output_queue, ready_flag=asr_ready)
+            asr = ASR("distil-small.en", "faster_whisper", speech_segments,output_queue, ready_flag=asr_ready)
 
             vad = VAD(audio_chunks, speech_segments, max_filter_window=10, ready_flag=vad_ready, speech_start_flag=speech_start, speech_end_flag=speech_end)
 
@@ -327,10 +338,12 @@ class WhisperASRPublisher(Node):
 
             mic.start()
             while True:
+                self.get_logger().info("Direction %d" % (self.r_mic.direction))
                 item = output_queue.get()
                 msg = Chat()
                 msg.chat_text = item["text"]
                 msg.sid_embedding = item["emb"]
+                msg.direction = self.r_mic.direction
                 self.publisher_.publish(msg)
                 self.get_logger().info('Publishing: "%s"' % msg.chat_text)
         except:

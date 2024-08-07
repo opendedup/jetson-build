@@ -22,7 +22,7 @@ class EmbeddingService(Node):
     def __init__(self):
         super().__init__('embedding_service')
         self.declare_parameter('dimensions', 768)
-        self.declare_parameter('embeddings_path','/opt/ros2/embeddings')
+        self.declare_parameter('embeddings_path','/opt/shimmy/embeddings')
         self.dimensions = self.get_parameter("dimensions").value
         self.get_logger().info('Emb Dimensions = %d'% (self.dimensions))
         nbits = self.dimensions*4

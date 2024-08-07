@@ -28,24 +28,43 @@ class ProcessImage_Subscriber(Node):
         super().__init__('process_image_subscriber')
         self.bridge = CvBridge()
         self.fifo = FIFOCache(10)
+        self.depth_fifo = FIFOCache(10)
         self.lock = threading.Lock()
         self.srv = self.create_service(GetImage, 'get_image', self.get_image)
-        self.subscription = self.create_subscription(
+        self.depth_srv = self.create_service(GetImage, 'get_depth_image', self.get_depth_image)
+        self.image_subscription = self.create_subscription(
             SImage,
             'image_raw',
             self.img_callback,
+            10)
+        self.depth_subscription = self.create_subscription(
+            SImage,
+            'depth_image_raw',
+            self.depth_callback,
             10)
     
     def img_callback(self,image_msg):
             with self.lock:
                 self.fifo.set(image_msg)
+    
+    def depth_callback(self,image_msg):
+            with self.lock:
+                self.depth_fifo.set(image_msg)
             
     def get_image(self, request, response):
         with self.lock:
              img_data = self.fifo.cache[0]
         
         response.image = img_data
-        self.get_logger().info('done')
+        self.get_logger().debug('done')
+        return response
+    
+    def get_depth_image(self, request, response):
+        with self.lock:
+             img_data = self.depth_fifo.cache[0]
+        
+        response.image = img_data
+        self.get_logger().debug('done')
         return response
     
 def main(args=None):

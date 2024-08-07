@@ -6,6 +6,7 @@ from typing import List, Optional
 from vertexai.language_models import TextEmbeddingInput, TextEmbeddingModel
 from scipy.spatial.distance import cosine
 import multiprocessing as mp
+import numpy as np
 import time
 
 
@@ -77,6 +78,80 @@ def map_emb_distance(emb,cache_emb):
         embs.append((c_emb,emb))
     dists = pool.map(get_emb_distance, embs)
     return dists
+
+def quaternion_from_euler(roll, pitch, yaw):
+    """
+    Converts euler roll, pitch, yaw to quaternion (w in last place)
+    quat = [x, y, z, w]
+    Bellow should be replaced when porting for ROS 2 Python tf_conversions is done.
+    """
+    cy = math.cos(yaw * 0.5)
+    sy = math.sin(yaw * 0.5)
+    cp = math.cos(pitch * 0.5)
+    sp = math.sin(pitch * 0.5)
+    cr = math.cos(roll * 0.5)
+    sr = math.sin(roll * 0.5)
+
+    q = [0] * 4
+    q[0] = cy * cp * cr + sy * sp * sr
+    q[1] = cy * cp * sr - sy * sp * cr
+    q[2] = sy * cp * sr + cy * sp * cr
+    q[3] = sy * cp * cr - cy * sp * sr
+
+    return q
+
+def quaternion_to_rpy(quaternion):
+  """
+  Converts a quaternion to roll, pitch, and yaw angles.
+
+  Args:
+    quaternion: A numpy array representing the quaternion (w, x, y, z).
+
+  Returns:
+    A numpy array containing the roll, pitch, and yaw angles in radians.
+  """
+
+  # Extract quaternion components
+  w, x, y, z = quaternion
+
+  # Calculate roll, pitch, and yaw angles
+  roll = np.arctan2(2.0 * (w * x + y * z), 1.0 - 2.0 * (x**2 + y**2))
+  pitch = np.arcsin(2.0 * (w * y - z * x))
+  yaw = np.arctan2(2.0 * (w * z + x * y), 1.0 - 2.0 * (y**2 + z**2))
+
+  return np.array([roll, pitch, yaw])
+
+
+def extract_text_from_dict(data, sentence_separator=" "):
+    """Extracts all text from a dictionary and its nested dictionaries into a single sentence.
+
+    Args:
+    data: The dictionary to extract text from.
+    sentence_separator: The separator to use between extracted text elements.
+
+    Returns:
+    A string containing all the extracted text as a sentence.
+    """
+
+    text_parts = []
+    for key, value in data.items():
+        if isinstance(value, str):
+            text_parts.append(value)
+        elif isinstance(value, dict):
+            text_parts.append(extract_text_from_dict(value, sentence_separator))
+        elif isinstance(value, list):
+            for item in value:
+                if isinstance(item, str):
+                    text_parts.append(item)
+                elif isinstance(item, dict):
+                    text_parts.append(extract_text_from_dict(item, sentence_separator))
+
+    # Remove potential unwanted characters like newline and tab
+    text = re.sub(r"[\n\t]", " ", sentence_separator.join(text_parts))
+    # Ensure sentence ends with a period
+    if not text.endswith("."):
+        text += "."
+    return text
 
     
 

@@ -67,6 +67,7 @@ class RivaASRPublisher(Node):
         resp_text = ""
         sid_emb = []
         ctx_emb = []
+        direction = 0
         while True:
             try:
                 ro = self.q.get(block=True, timeout=self.delay)
@@ -79,12 +80,14 @@ class RivaASRPublisher(Node):
                         sid_emb = ro["sid_embedding"]
                         ctx_emb = ro["ctx_embedding"]
                         resp_text +=" " + ro["chat"]
+                    direction = ro["direction"]
             except queue.Empty:
                 if len(resp_text) > 0:
                     msg = Chat()
                     msg.chat_text = resp_text
                     msg.sid_embedding = sid_emb
                     msg.ctx_embedding = ctx_emb
+                    msg.direction = direction
                     self.publisher_.publish(msg)
                     self.get_logger().debug('Publishing: "%s"' % msg.chat_text)
                     resp_text = ""
@@ -105,7 +108,10 @@ class RivaASRPublisher(Node):
                 
                 for result in response.results:
                     self.get_logger().info("Direction %d" % (self.r_mic.direction))
-                    self.q.put({"chat": result.alternatives[0].transcript,"sid_embedding":sid_embedding,"ctx_embedding":ctx_embedding})
+                    self.q.put({"chat": result.alternatives[0].transcript,
+                                "sid_embedding":sid_embedding,
+                                "ctx_embedding":ctx_embedding,
+                                "direction": self.r_mic.direction})
 
 
 def main(args=None):

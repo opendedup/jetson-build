@@ -23,12 +23,24 @@ class MicroControllerrService(Node):
 
     def __init__(self):
         super().__init__('microcontroller_service')
-        self.declare_parameter('serial_device', "/dev/ttyACM0")
+        self.declare_parameter('serial_device', "")
         self.serial_device = self.get_parameter("serial_device").value
-        self.get_logger().info('Serial Device = %s'% (self.serial_device))
+        self.serial_obj = None
         self.lock = threading.Lock()
-        self.serial_obj = serial.Serial(self.serial_device) # COMxx  format on Windows
-                  # ttyUSBx format on Linux
+        if len(self.serial_device) > 0:
+            serial.Serial(self.serial_device)
+        else:
+            for i in range(0,9):
+                try:
+                    self.serial_device = f"/dev/ttyACM{i}"
+                    self.serial_obj = serial.Serial(self.serial_device)
+                    break
+                except:
+                    self.serial_obj = None
+        if self.serial_obj is None:
+            raise Exception("Serial Device not found")
+        self.get_logger().info('Serial Device = %s'% (self.serial_device))
+        
         self.serial_obj.baudrate = 115200  # set Baud rate to 9600
         self.serial_obj.bytesize = 8   # Number of data bits = 8
         self.serial_obj.parity  ='N'   # No parity
@@ -62,7 +74,7 @@ class MicroControllerrService(Node):
     def tworker(self):
         while True:
             try:
-                time.sleep(10)
+                time.sleep(30)
                 obj = {"command":"power"}
                 data=json.dumps(obj)
                 data = f"{data}\n"
@@ -81,7 +93,7 @@ class MicroControllerrService(Node):
             except:
                 self.get_logger().error('Got an error while reading power info.')
                 self.get_logger().error('%s' % traceback.format_exc())
-                time.sleep(10)
+                time.sleep(30)
     
              
     def ledpattern_callback(self, msg: LedPattern):    
