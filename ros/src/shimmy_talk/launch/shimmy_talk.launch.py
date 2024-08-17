@@ -1,7 +1,7 @@
 from launch import LaunchDescription
-from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription, RegisterEventHandler,OpaqueFunction,SetEnvironmentVariable
+from launch.actions import TimerAction, DeclareLaunchArgument, IncludeLaunchDescription, RegisterEventHandler,OpaqueFunction,SetEnvironmentVariable
 from launch.conditions import IfCondition
-from launch.event_handlers import OnProcessExit
+from launch.event_handlers import OnProcessExit, OnProcessStart
 from launch.substitutions import Command, FindExecutable, PythonExpression, PathJoinSubstitution, LaunchConfiguration
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch_ros.actions import Node
@@ -51,8 +51,8 @@ def launch_setup(context, *args, **kwargs):
     
     riva_asr = Node(
             package='shimmy_talk',
-            executable='riva_asr',
-            name='riva_asr',
+            executable='gcp_asr',
+            name='gcp_asr',
             output='both',
             parameters=[config]
         )
@@ -83,6 +83,23 @@ def launch_setup(context, *args, **kwargs):
             executable='foxglove_bridge',
         )
     
+    shimmy_move_init = Node(
+        package="shimmy_move",
+        executable="shimmy_move_init",
+        output="both",
+    )
+    
+    launch_init_after_talk = RegisterEventHandler(
+        event_handler=OnProcessStart(
+            target_action=asr_listener,
+            on_start=[
+                TimerAction(
+                        period=30.0,
+                        actions=[shimmy_move_init],
+                    )],
+        )
+    )
+    
     return [
         foxglove_bridge,
         image_cap_service,
@@ -91,6 +108,7 @@ def launch_setup(context, *args, **kwargs):
         m_service,
         #img_emb,
         voice_emb,
+        #launch_init_after_talk
     ]
 
 def generate_launch_description():

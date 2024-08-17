@@ -121,6 +121,17 @@ def quaternion_to_rpy(quaternion):
 
   return np.array([roll, pitch, yaw])
 
+def adjust_angle(raw_angle):
+  """Adjusts the raw angle from the microphone to be 0 degrees in front.
+
+  Args:
+    raw_angle: The raw angle output from the microphone (where front is 270 degrees).
+
+  Returns:
+    The adjusted angle, where 0 degrees is in front.
+  """
+  adjusted_angle = (raw_angle - 270) % 360
+  return adjusted_angle
 
 def extract_text_from_dict(data, sentence_separator=" "):
     """Extracts all text from a dictionary and its nested dictionaries into a single sentence.

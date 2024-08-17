@@ -20,7 +20,8 @@ setup(
     tests_require=['pytest'],
     entry_points={
         'console_scripts': [
-            'shimmy_move = shimmy_move.shimmy_move:main'
+            'shimmy_move = shimmy_move.shimmy_move:main',
+            'shimmy_move_init = shimmy_move.rotate_clockwise_counterclockwise:main'
         ],
     },
 )

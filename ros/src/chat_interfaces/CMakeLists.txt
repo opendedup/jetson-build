@@ -35,6 +35,7 @@ rosidl_generate_interfaces(${PROJECT_NAME}
   "srv/SaySomething.srv"
   "srv/GetImage.srv"
   "srv/GetPower.srv"
+  "srv/GetPose.srv"
   DEPENDENCIES 
   sensor_msgs
 )

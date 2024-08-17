@@ -29,10 +29,10 @@ class ImageClientAsync(Node):
         self.image_model = GenerativeModel("gemini-1.5-flash-001",system_instruction=[image_system_instructions])
         self.image_chat = self.image_model.start_chat()
         self.safety_settings = {
-            generative_models.HarmCategory.HARM_CATEGORY_HATE_SPEECH: generative_models.HarmBlockThreshold.BLOCK_ONLY_HIGH,
-            generative_models.HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT: generative_models.HarmBlockThreshold.BLOCK_ONLY_HIGH,
-            generative_models.HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT: generative_models.HarmBlockThreshold.BLOCK_ONLY_HIGH,
-            generative_models.HarmCategory.HARM_CATEGORY_HARASSMENT: generative_models.HarmBlockThreshold.BLOCK_ONLY_HIGH,
+            generative_models.HarmCategory.HARM_CATEGORY_HATE_SPEECH: generative_models.HarmBlockThreshold.BLOCK_NONE,
+            generative_models.HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT: generative_models.HarmBlockThreshold.BLOCK_NONE,
+            generative_models.HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT: generative_models.HarmBlockThreshold.BLOCK_NONE,
+            generative_models.HarmCategory.HARM_CATEGORY_HARASSMENT: generative_models.HarmBlockThreshold.BLOCK_NONE,
         }
         self.config = {
             "max_output_tokens": 8192,
@@ -68,10 +68,19 @@ class ImageClientAsync(Node):
                                 generation_config=self.config,stream=False, safety_settings=self.safety_settings)
         return response.text
     
-    def get_bounding_box(self,text_req):
+    def get_bounding_box(self,text_req,additional_context):
+        if len(additional_context) > 0:
+            additional_context = f"""Additional Context Regarding the object:
+            {additional_context}
+            """
         prompt = f"""
-        What is the position of the {text_req} present in the image? Output objects in JSON format with both object names and positions as a JSON object: {{ name: [y_min, x_min, y_max, x_max] }}. Put the annswer in a JSON code block.
+        What is the position of the {text_req} present in the image?
+        
+        {additional_context} 
+
+Output objects in JSON format with both object names and positions as a JSON object: {{ name: [y_min, x_min, y_max, x_max] }}. Put the annswer in a JSON code block.
         """
+        
         print(prompt)
         
         response = self.send_request()
@@ -85,15 +94,17 @@ class ImageClientAsync(Node):
         coords = json.loads(response.text.replace("```json","").replace("```",""))
         print(coords)
         pt = [0,0,0]
+        obj_coords = [0,0,0,0]
         for key in coords:
             coords[key][0] = int((coords[key][0]/1000)*dims[1])
             coords[key][1] = int((coords[key][1]/1000)*dims[0])
             coords[key][2] = int((coords[key][2]/1000)*dims[1])
             coords[key][3] = int((coords[key][3]/1000)*dims[0])
+            obj_coords = coords[key]
             pt = convert_depth_image(d_response.image,coords[key],self.cam_info)
             crop_jpeg_from_buffer(buffered,coords[key][1],coords[key][0],coords[key][3],coords[key][2]).save("/root/jetson-build/myfile_crop.jpg", format="JPEG")
-
-        return pt
+            break
+        return (pt,obj_coords,buffered)
     
     
 
@@ -116,25 +127,25 @@ def convert_image(ros_image):
         return buffered,img_pil.size
     
 def convert_depth_image(ros_image,coords,cam_info):
-    print(ros_image.encoding)
+    #print(ros_image.encoding)
     mode_depth='F'
     depth_map = Image.frombytes(mode_depth, (ros_image.width, ros_image.height), ros_image.data)
     img_array = np.array(depth_map)
     cv_image = CvBridge().imgmsg_to_cv2(ros_image, "passthrough")
         # img_array = np.array(cv_image)
-    print("############################")
+    #print("############################")
     img_array = img_array[coords[0]:coords[2], coords[1]:coords[3]]
     distance = np.nanmean(img_array)
     height, width = img_array.shape
     center_x = width // 2
     center_y = height // 2
     depth = img_array[center_y, center_x]
-    print(img_array.shape)
+    #print(img_array.shape)
     #print(img_array)
-    print(distance)
-    print(depth)
+    #print(distance)
+    #print(depth)
     depth_image = np.array(cv_image, dtype=np.float32).reshape((ros_image.height, ros_image.width))
-    print(depth_image)
+    #print(depth_image)
     target_y = int((coords[0]+coords[2])/2)
     target_x = int((coords[1]+coords[3])/2)
     depth = depth_image[target_y, target_x]

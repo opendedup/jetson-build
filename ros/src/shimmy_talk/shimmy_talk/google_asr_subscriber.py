@@ -56,7 +56,6 @@ import asyncio
 from transformers import AutoModel, AutoTokenizer
 import torch
 
-from geometry_msgs.msg import PoseStamped
 from datetime import datetime
 
 import logging
@@ -133,10 +132,10 @@ Some Facts about you can use in context when answering questions:
         
 
         self.safety_settings = {
-            generative_models.HarmCategory.HARM_CATEGORY_HATE_SPEECH: generative_models.HarmBlockThreshold.BLOCK_ONLY_HIGH,
-            generative_models.HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT: generative_models.HarmBlockThreshold.BLOCK_ONLY_HIGH,
-            generative_models.HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT: generative_models.HarmBlockThreshold.BLOCK_ONLY_HIGH,
-            generative_models.HarmCategory.HARM_CATEGORY_HARASSMENT: generative_models.HarmBlockThreshold.BLOCK_ONLY_HIGH,
+            generative_models.HarmCategory.HARM_CATEGORY_HATE_SPEECH: generative_models.HarmBlockThreshold.BLOCK_NONE,
+            generative_models.HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT: generative_models.HarmBlockThreshold.BLOCK_NONE,
+            generative_models.HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT: generative_models.HarmBlockThreshold.BLOCK_NONE,
+            generative_models.HarmCategory.HARM_CATEGORY_HARASSMENT: generative_models.HarmBlockThreshold.BLOCK_NONE,
         }
         
         self.sample_rate_hz = 44100
@@ -170,6 +169,8 @@ Some Facts about you can use in context when answering questions:
         for agent in robot_agents:
             dct = agent.to_dict()
             self.agent_emb[dct["name"]] = self.get_ctx_embeddings([extract_text_from_dict(dct)])[0]   
+        
+        
  
     def append_to_file(self,text,person):
         if person.startswith(self.voice_name):
@@ -321,18 +322,36 @@ Some Facts about you can use in context when answering questions:
                     )
                     self.get_logger().info("Volume = %d" %(self.volume_adjust))
                 elif fcmd == "use_robot_eyes":
-                    req = additional_context =response.candidates[0].content.parts[0].function_call.args["user_request"]
+                    req =response.candidates[0].content.parts[0].function_call.args["user_request"]
                     prompt = f"{person} - {req}"
                     if "additional_context" in response.candidates[0].content.parts[0].function_call.args:
                         additional_context =response.candidates[0].content.parts[0].function_call.args["additional_context"]
                         prompt +=f"\n*** Additional Context ***\n{additional_context}"
                     api_part = self.robot_runner.get_image(prompt)
                     self.get_logger().info("API_PART = %s" % (api_part))
+                elif fcmd == "stop_moving":
+                    api_part = self.robot_runner.cancel_move()
+                    self.get_logger().info("API_PART = %s" % (api_part))
                 elif fcmd == "find_object_with_eyes":
-                    
-                    req = additional_context =response.candidates[0].content.parts[0].function_call.args["object"]
-        
-                    api_part = self.robot_runner.find_object(req)
+                    req = response.candidates[0].content.parts[0].function_call.args["object"]
+                    additional_context=""
+                    if "additional_context" in response.candidates[0].content.parts[0].function_call.args:
+                        additional_context =response.candidates[0].content.parts[0].function_call.args["additional_context"]
+                    api_part = self.robot_runner.find_object(req,additional_context=additional_context)
+                    self.get_logger().info("API_PART = %s" % (api_part))
+                elif fcmd == "turn_inplace":
+                    req = response.candidates[0].content.parts[0].function_call.args["turn_instructions"]
+                    api_part = self.robot_runner.turn_shimmy(req)
+                    self.get_logger().info("API_PART = %s" % (api_part))
+                elif fcmd == "move_to_object_with_wheels":
+                    additional_context=""
+                    if "additional_context" in response.candidates[0].content.parts[0].function_call.args:
+                        additional_context =response.candidates[0].content.parts[0].function_call.args["additional_context"]
+                    movement_commands=""
+                    if "movement_commands" in response.candidates[0].content.parts[0].function_call.args:
+                        movement_commands =response.candidates[0].content.parts[0].function_call.args["movement_commands"]
+                    req = response.candidates[0].content.parts[0].function_call.args["object"]
+                    api_part = self.robot_runner.move_to_object(req,additional_context=additional_context,move_command=movement_commands)
                     self.get_logger().info("API_PART = %s" % (api_part))
                 elif fcmd == "remember_image_objects":
                     api_part = self.robot_runner.remember_image_objects(response.candidates[0].content.parts[0].function_call.args["picture_context"])
@@ -371,7 +390,7 @@ Some Facts about you can use in context when answering questions:
                 time.sleep(0.05)
             except Exception as e:
                 self.get_logger().error('Failed process sound')
-                self.get_logger().error('%s' % traceback.format_exc())
+                self.get_logger().debug('%s' % traceback.format_exc())
                                
                         
     def tworker(self):
@@ -381,7 +400,7 @@ Some Facts about you can use in context when answering questions:
         with ThreadPoolExecutor(max_workers=5) as executor:
             while True:
                 try:
-                    txt = self.text_q.get(block=True, timeout=.5)
+                    txt = self.text_q.get(block=True, timeout=.3)
                     if txt is not None:
                         resp_text += txt
                     if len(resp_text) > 50:

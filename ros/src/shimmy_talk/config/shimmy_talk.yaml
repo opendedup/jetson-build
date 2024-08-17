@@ -2,7 +2,7 @@ asr_listener:
   ros__parameters:
     sound_device: "M12i Mobile"
     train_voice: false
-    train_voice_name: 'en-US-Journey-O'
+    train_voice_name: 'unknow'
 # m_service:
 #   ros__parameters:
 #     serial_device: "/dev/ttyACM"

@@ -18,7 +18,7 @@ from dataclasses import dataclass
 from contextlib import contextmanager
 from typing import Optional
 from whisper_trt.vad import load_vad
-from .utils import find_audio_device_index
+from .utils import find_audio_device_index, adjust_angle
 import torch
 from transformers import Wav2Vec2ForSequenceClassification,Wav2Vec2FeatureExtractor
 from .usb_4_mic_array import Tuning
@@ -119,25 +119,27 @@ class Microphone(Process):
         self.sample_rate = sample_rate
 
     def run(self):
-        with get_respeaker_audio_stream(sample_rate=self.sample_rate, 
-                                        device_index=self.device_index, 
-                                        channels=self.num_channels) as stream:
-            while True:
-                try:
-                    audio_raw = stream.read(self.chunk_size)
-                    audio_numpy = audio_numpy_from_bytes(audio_raw)
-                    audio_numpy = np.stack([audio_numpy_slice_channel(audio_numpy, i, self.num_channels) for i in range(self.num_channels)])
-                    audio_numpy_normalized = audio_numpy_normalize(audio_numpy)
+        while True:
+            with get_respeaker_audio_stream(sample_rate=self.sample_rate, 
+                                            device_index=self.device_index, 
+                                            channels=self.num_channels) as stream:
+                while True:
+                    try:
+                        audio_raw = stream.read(self.chunk_size)
+                        audio_numpy = audio_numpy_from_bytes(audio_raw)
+                        audio_numpy = np.stack([audio_numpy_slice_channel(audio_numpy, i, self.num_channels) for i in range(self.num_channels)])
+                        audio_numpy_normalized = audio_numpy_normalize(audio_numpy)
 
-                    audio = AudioChunk(
-                        audio_raw=audio_raw,
-                        audio_numpy=audio_numpy,
-                        audio_numpy_normalized=audio_numpy_normalized
-                    )
+                        audio = AudioChunk(
+                            audio_raw=audio_raw,
+                            audio_numpy=audio_numpy,
+                            audio_numpy_normalized=audio_numpy_normalized
+                        )
 
-                    self.output_queue.put(audio)
-                except:
-                    print(traceback.format_exc())
+                        self.output_queue.put(audio)
+                    except:
+                        print(traceback.format_exc())
+                        break
 
 
 class VAD(Process):
@@ -147,7 +149,7 @@ class VAD(Process):
             output_queue: Queue,
             sample_rate: int = 16000,
             use_channel: int = 0,
-            speech_threshold: float = 0.5,
+            speech_threshold: float = 0.4,
             max_filter_window: int = 1,
             ready_flag = None,
             speech_start_flag = None,
@@ -184,6 +186,7 @@ class VAD(Process):
             
 
             audio_chunk = self.input_queue.get()
+            #print(f"""input_queue={self.input_queue.qsize()}""")
 
             voice_prob = float(vad(audio_chunk.audio_numpy_normalized[self.use_channel], sr=self.sample_rate).flatten()[0])
 
@@ -195,6 +198,7 @@ class VAD(Process):
             )
 
             max_filter_window.append(chunk)
+            #print(f"""max_filter_window={len(max_filter_window)}""")
 
             is_voice = any(c.voice_prob > self.speech_threshold for c in max_filter_window)
             
@@ -205,15 +209,16 @@ class VAD(Process):
                 if self.speech_start_flag is not None:
                     self.speech_start_flag.set()
             elif is_voice < prev_is_voice:
+                print(len(speech_chunks))
                 # end voice
                 segment = AudioSegment(chunks=speech_chunks)
                 self.output_queue.put(segment)
                 if self.speech_end_flag is not None:
                     self.speech_end_flag.set()
+                speech_chunks = []
             elif is_voice:
                 # continue voice
                 speech_chunks.append(chunk)
-
             prev_is_voice = is_voice
 
 
@@ -322,7 +327,7 @@ class WhisperASRPublisher(Node):
             speech_end = Event()
 
 
-            asr = ASR("distil-small.en", "faster_whisper", speech_segments,output_queue, ready_flag=asr_ready)
+            asr = ASR("base.en", "whisper_trt", speech_segments,output_queue, ready_flag=asr_ready)
 
             vad = VAD(audio_chunks, speech_segments, max_filter_window=10, ready_flag=vad_ready, speech_start_flag=speech_start, speech_end_flag=speech_end)
 
@@ -338,12 +343,13 @@ class WhisperASRPublisher(Node):
 
             mic.start()
             while True:
-                self.get_logger().info("Direction %d" % (self.r_mic.direction))
+                direction = adjust_angle(self.r_mic.direction)
+                self.get_logger().info("Direction %d" % (direction))
                 item = output_queue.get()
                 msg = Chat()
                 msg.chat_text = item["text"]
                 msg.sid_embedding = item["emb"]
-                msg.direction = self.r_mic.direction
+                msg.direction = direction
                 self.publisher_.publish(msg)
                 self.get_logger().info('Publishing: "%s"' % msg.chat_text)
         except:

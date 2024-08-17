@@ -71,6 +71,29 @@ class MicroControllerrService(Node):
         t = threading.Thread(target=self.tworker)
         t.start()
     
+    def create_serial(self):
+        if self.serial_obj is not None:
+            self.serial_obj.close()
+            
+        self.serial_obj = None
+        
+        for i in range(0,9):
+            try:
+                self.serial_device = f"/dev/ttyACM{i}"
+                self.serial_obj = serial.Serial(self.serial_device)
+                break
+            except:
+                self.serial_obj = None
+        if self.serial_obj is None:
+            raise Exception("Serial Device not found")
+        self.get_logger().info('Serial Device = %s'% (self.serial_device))
+        
+        self.serial_obj.baudrate = 115200  # set Baud rate to 9600
+        self.serial_obj.bytesize = 8   # Number of data bits = 8
+        self.serial_obj.parity  ='N'   # No parity
+        self.serial_obj.stopbits = 1   # Number of Stop bits = 1
+        
+        
     def tworker(self):
         while True:
             try:
@@ -94,6 +117,11 @@ class MicroControllerrService(Node):
                 self.get_logger().error('Got an error while reading power info.')
                 self.get_logger().error('%s' % traceback.format_exc())
                 time.sleep(30)
+                try:
+                    self.create_serial()
+                except:
+                    self.get_logger().error('Got an error while trying to connect to serial device.')
+                    self.get_logger().error('%s' % traceback.format_exc())
     
              
     def ledpattern_callback(self, msg: LedPattern):    

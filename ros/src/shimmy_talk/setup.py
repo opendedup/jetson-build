@@ -27,7 +27,8 @@ setup(
             'riva_asr = shimmy_talk.riva_asr:main',
             'listener = shimmy_talk.google_asr_subscriber:main',
             'walley_listener = shimmy_talk.walley_asr_subscriber:main',
-            'whisper_asr = shimmy_talk.whisper_asr:main'
+            'whisper_asr = shimmy_talk.whisper_asr:main',
+            'gcp_asr = shimmy_talk.gcp_asr:main',
         ],
     },
 )

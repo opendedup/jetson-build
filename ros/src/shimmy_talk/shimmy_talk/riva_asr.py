@@ -4,7 +4,7 @@ from chat_interfaces.msg import Chat
 import riva.client
 import riva.client.audio_io
 
-from .utils import find_audio_device_index
+from .utils import find_audio_device_index, adjust_angle
 from .usb_4_mic_array import Tuning
 import usb.core
 import usb.util
@@ -88,6 +88,7 @@ class RivaASRPublisher(Node):
                     msg.sid_embedding = sid_emb
                     msg.ctx_embedding = ctx_emb
                     msg.direction = direction
+                    
                     self.publisher_.publish(msg)
                     self.get_logger().debug('Publishing: "%s"' % msg.chat_text)
                     resp_text = ""
@@ -107,11 +108,11 @@ class RivaASRPublisher(Node):
             ):
                 
                 for result in response.results:
-                    self.get_logger().info("Direction %d" % (self.r_mic.direction))
+                    self.get_logger().info("Direction %d" % (adjust_angle(self.r_mic.direction)))
                     self.q.put({"chat": result.alternatives[0].transcript,
                                 "sid_embedding":sid_embedding,
                                 "ctx_embedding":ctx_embedding,
-                                "direction": self.r_mic.direction})
+                                "direction": adjust_angle(self.r_mic.direction)})
 
 
 def main(args=None):

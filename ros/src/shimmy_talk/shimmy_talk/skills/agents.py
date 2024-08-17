@@ -69,10 +69,10 @@ class AgentRunner:
             "top_p": 0.95,
         }
         self.safety_settings = {
-            generative_models.HarmCategory.HARM_CATEGORY_HATE_SPEECH: generative_models.HarmBlockThreshold.BLOCK_ONLY_HIGH,
-            generative_models.HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT: generative_models.HarmBlockThreshold.BLOCK_ONLY_HIGH,
-            generative_models.HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT: generative_models.HarmBlockThreshold.BLOCK_ONLY_HIGH,
-            generative_models.HarmCategory.HARM_CATEGORY_HARASSMENT: generative_models.HarmBlockThreshold.BLOCK_ONLY_HIGH,
+            generative_models.HarmCategory.HARM_CATEGORY_HATE_SPEECH: generative_models.HarmBlockThreshold.BLOCK_NONE,
+            generative_models.HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT: generative_models.HarmBlockThreshold.BLOCK_NONE,
+            generative_models.HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT: generative_models.HarmBlockThreshold.BLOCK_NONE,
+            generative_models.HarmCategory.HARM_CATEGORY_HARASSMENT: generative_models.HarmBlockThreshold.BLOCK_NONE,
         }
         
 
@@ -187,6 +187,25 @@ class AgentRunner:
                 },
             )
         return part
+    
+    def turn_shimmy(self,radians):
+        try:
+            self.shimmy_move_client.publish_turn(radians)
+            part = Part.from_function_response(
+                name="turn_inplace",
+                response={
+                    "content": {"status":"starting to turn"},
+                },
+            )
+        except:
+            logging.error(traceback.format_exc()) 
+            part = Part.from_function_response(
+                name="turn_inplace",
+                response={
+                    "content": {"error":"cannot turn robot."},
+                },
+            )
+        return part
             
     
     def change_led_pattern(self,pattern):
@@ -249,17 +268,18 @@ class AgentRunner:
                 },
             )
         return part
-    
-    def find_object(self,text_req):
+    def find_object(self,text_req,additional_context=""):
         try:
-            rtxt = self.image_client.get_bounding_box(text_req)
-            self.shimmy_move_client.publish_pose(f"move forward by {rtxt[2]} meters and to the right by {rtxt[0]} meters")
+            rtxt,_,_ = self.image_client.get_bounding_box(text_req,additional_context)
+            direction = "left"
+            if rtxt[0] > 0:
+                direction = "right"
             print(rtxt)
             part = Part.from_function_response(
                 name="find_object_with_eyes",
                 response={
-                    "content": {"description":f"{text_req} found about {rtxt[2]} meters in front. Moving to {text_req}"},
-                },
+                    "content": {"description":f"{text_req} found about {rtxt[2]} meters in front and {rtxt[0]} meters to the {direction}."}
+                }
             )
             
         except:
@@ -268,6 +288,59 @@ class AgentRunner:
                 name="find_object_with_eyes",
                 response={
                     "content": {"error":"cannot get image info at this time"},
+                },
+            )
+        return part
+    
+    def move_to_object(self,text_req,additional_context="",move_command=""):
+        try:
+            rtxt,obj_coords,_ = self.image_client.get_bounding_box(text_req,additional_context)
+            direction = "left"
+            if rtxt[0] > 0:
+                direction = "right"
+            if len(move_command) == 0:
+                move_command = f"Move directly infront of the {text_req} leaving a buffer so you don't run into it."
+            self.shimmy_move_client.publish_pose(f"""There is {text_req} found  {rtxt[2]} meters forward and to the {direction} {rtxt[0]} meters.
+In the image. In the image provided the {text_req} can be found within the following bounding box expressed as [y_min, x_min, y_max, x_max]:
+{obj_coords}
+
+{move_command}
+""")
+            print(rtxt)
+            part = Part.from_function_response(
+                name="move_to_object_with_wheels",
+                response={
+                    "content": {"description":f"{text_req} found about {rtxt[2]} meters in front. Moving to {text_req}"},
+                },
+            )
+            
+        except:
+            logging.error(traceback.format_exc()) 
+            part = Part.from_function_response(
+                name="move_to_object_with_wheels",
+                response={
+                    "content": {"error":"cannot get image info at this time"},
+                },
+            )
+        return part
+    
+    def cancel_move(self):
+        try:
+           
+            self.shimmy_move_client.publish_cancel()
+            part = Part.from_function_response(
+                name="stop_moving",
+                response={
+                    "content": {"description":f"Canceled Move"},
+                },
+            )
+            
+        except:
+            logging.error(traceback.format_exc()) 
+            part = Part.from_function_response(
+                name="stop_moving",
+                response={
+                    "content": {"error":"Unable to stop moving"},
                 },
             )
         return part
@@ -489,13 +562,36 @@ This function can be used to find anything in the field of view such as:
 * Find an apple on the floor
 * Find people in a room
 * Locate a book on a desk
+* Do you see a shoe on the ground
 """,
             # Function parameters are specified in OpenAPI JSON schema format
             parameters={
                 "type": "object",
                 "properties": {
                     "object": {"type": "string", "description": "The object to locate in the field of view."},
-                    "additional_context": {"type": "string", "description": "Any context from the conversation history that may be useful when analyzing what you see."},
+                    "additional_context": {"type": "string", "description": "Any context that will help identify the specific object."},
+                },
+                "required" : ["object"],
+            },
+
+    )
+
+move_to_object_function = FunctionDeclaration(
+            name="move_to_object_with_wheels",
+            description="""Move around using your wheels to an object in the field of view. 
+This function can be used to find an object and then move to the object that was found. Examples are as follows:
+* Move to a person
+* Stroll over to a door way
+* Get a closer look at an apple
+* Move to the door and turn towards me
+""",
+            # Function parameters are specified in OpenAPI JSON schema format
+            parameters={
+                "type": "object",
+                "properties": {
+                    "object": {"type": "string", "description": "The object to move to in the field of view."},
+                    "additional_context": {"type": "string", "description": "Any context that will help identify the object."},
+                    "movement_commands": {"type": "string", "description": "Any addition context regarding how to move or move commands. Examples are: Turn back towards me, Face where you came from, stop 1 foot in front of the shoe"},
                 },
                 "required" : ["object"],
             },
@@ -547,8 +643,9 @@ move_shimmy = FunctionDeclaration(
         name="move_around",
         description="""Move around based on voice commands. Example commands are as follows:
 * Move forward 3 feet.
-* Come back 1 Meter
+* Come back 1 Meter and turn 180 degrees
 * Turn around
+* Rotate 90 degrees
 """,
         parameters={
             "type": "object",
@@ -556,6 +653,36 @@ move_shimmy = FunctionDeclaration(
                 "move_instructions": {"type": "string", "description": "The instructions on how to move or navigate"},
             },
             "required":["move_instructions"]
+        },
+)
+
+turn_shimmy = FunctionDeclaration(
+        name="turn_inplace",
+        description="""Turn in place based on voice commands. Example commands are as follows:
+* Turn Around
+* Turn 90 degrees
+* Turn 6 radians
+* Spin around 3 times
+""",
+        parameters={
+            "type": "object",
+            "properties": {
+                "turn_instructions": {"type": "number", "description": "the float number in radians to turn. 1 turn or 360 degrees is 6.28319 radians. Clockwise is negative and counter clockwise is positive radians."},
+            },
+            "required":["turn_instructions"]
+        },
+)
+
+stop_shimmy = FunctionDeclaration(
+        name="stop_moving",
+        description="""Stop moving or turning. This will cancel any current move or turn opperations.
+""",
+        parameters={
+            "type": "object",
+            "properties": {
+                "command": {"type": "boolean", "description": "whether or not to stop moving or turning. setting to true will stop turning"},
+            },
+            "required":["command"]
         },
 )
 
@@ -599,7 +726,10 @@ robot_agents = [
             get_power_func,
             change_led_pattern,
             move_shimmy,
-            find_object_function
+            find_object_function,
+            move_to_object_function,
+            #turn_shimmy,
+            stop_shimmy
             
         ]
 
