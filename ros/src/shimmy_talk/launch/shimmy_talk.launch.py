@@ -78,36 +78,44 @@ def launch_setup(context, *args, **kwargs):
          ]
         )
     
-    foxglove_bridge = Node(
-            package='foxglove_bridge',
-            executable='foxglove_bridge',
-        )
+    # foxglove_bridge = Node(
+    #         package='foxglove_bridge',
+    #         executable='foxglove_bridge',
+    #     )
     
-    shimmy_move_init = Node(
-        package="shimmy_move",
-        executable="shimmy_move_init",
-        output="both",
+    # shimmy_move_init = Node(
+    #     package="shimmy_move",
+    #     executable="shimmy_move_init",
+    #     output="both",
+    # )
+    
+    node_checker = Node(
+        package='shimmy_bot_utils',
+        executable='node_checker',
+        name='shimmy_talk_node_checker',
+        parameters=[{'target_nodes': ['voice_emb','m_service','image_cap_service','asr_listener']}]  # Pass the list of nodes to monitor
     )
     
-    launch_init_after_talk = RegisterEventHandler(
-        event_handler=OnProcessStart(
-            target_action=asr_listener,
-            on_start=[
-                TimerAction(
-                        period=30.0,
-                        actions=[shimmy_move_init],
-                    )],
-        )
-    )
+    # launch_init_after_talk = RegisterEventHandler(
+    #     event_handler=OnProcessStart(
+    #         target_action=asr_listener,
+    #         on_start=[
+    #             TimerAction(
+    #                     period=30.0,
+    #                     actions=[shimmy_move_init],
+    #                 )],
+    #     )
+    # )
     
     return [
-        foxglove_bridge,
+        # foxglove_bridge,
         image_cap_service,
         asr_listener,
         riva_asr,
         m_service,
         #img_emb,
         voice_emb,
+        node_checker
         #launch_init_after_talk
     ]
 
