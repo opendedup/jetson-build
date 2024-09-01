@@ -1,3 +1,6 @@
 [submodule "ros/src/shimmy_bot"]
 	path = ros/src/shimmy_bot
 	url = https://github.com/opendedup/shimmy_bot.git
+[submodule "ros/src/shimmy_sensors"]
+	path = ros/src/shimmy_sensors
+	url = https://github.com/opendedup/shimmy_sensors.git
