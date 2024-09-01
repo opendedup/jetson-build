@@ -151,6 +151,7 @@ class VAD(Process):
             use_channel: int = 0,
             speech_threshold: float = 0.4,
             max_filter_window: int = 1,
+            trailing_silence_frames: int = 10,  # Number of silent frames to detect end of speech
             ready_flag = None,
             speech_start_flag = None,
             speech_end_flag = None):
@@ -161,6 +162,7 @@ class VAD(Process):
         self.use_channel = use_channel
         self.speech_threshold = speech_threshold
         self.max_filter_window = max_filter_window
+        self.trailing_silence_frames = trailing_silence_frames
         self.ready_flag = ready_flag
         self.speech_start_flag = speech_start_flag
         self.speech_end_flag = speech_end_flag
@@ -178,6 +180,7 @@ class VAD(Process):
         speech_chunks = []
 
         prev_is_voice = False
+        silent_frame_count = 0 
 
         if self.ready_flag is not None:
             self.ready_flag.set()
@@ -198,27 +201,24 @@ class VAD(Process):
             )
 
             max_filter_window.append(chunk)
-            #print(f"""max_filter_window={len(max_filter_window)}""")
 
             is_voice = any(c.voice_prob > self.speech_threshold for c in max_filter_window)
             
-            if is_voice > prev_is_voice:
-                speech_chunks = [chunk for chunk in max_filter_window]
-                # start voice
+            if is_voice:
                 speech_chunks.append(chunk)
-                if self.speech_start_flag is not None:
+                silent_frame_count = 0  # Reset silent frame count if voice is detected
+                if self.speech_start_flag is not None and not prev_is_voice:
                     self.speech_start_flag.set()
-            elif is_voice < prev_is_voice:
-                print(len(speech_chunks))
-                # end voice
-                segment = AudioSegment(chunks=speech_chunks)
-                self.output_queue.put(segment)
-                if self.speech_end_flag is not None:
-                    self.speech_end_flag.set()
-                speech_chunks = []
-            elif is_voice:
-                # continue voice
-                speech_chunks.append(chunk)
+            else:
+                if speech_chunks: # if speech_chunks is not empty
+                    silent_frame_count += 1
+                    if silent_frame_count >= self.trailing_silence_frames:
+                        segment = AudioSegment(chunks=speech_chunks)
+                        self.output_queue.put(segment)
+                        if self.speech_end_flag is not None:
+                            self.speech_end_flag.set()
+                        speech_chunks = []
+                        silent_frame_count = 0
             prev_is_voice = is_voice
 
 

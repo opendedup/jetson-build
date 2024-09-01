@@ -26,6 +26,7 @@ from google.cloud.speech_v2.types import cloud_speech
 import scipy.io.wavfile as wav
 import io
 from .whisper_asr import Microphone,VAD,StartEndMonitor
+from pydub import AudioSegment
 
 
 
@@ -40,13 +41,42 @@ class GCPASR(Process):
         self.output_queue = output_queue
         self.model_name = "superb/wav2vec2-large-superb-sid"
         self.project_id = "lemmingsinthewind"
+        self.boost_phrases = ["Shimmy", "Hey Shimmy"] 
+        phrase_set = cloud_speech.PhraseSet(phrases=[{"value": phrase, "boost": 20} for phrase in self.boost_phrases])
+        self.adaptation = cloud_speech.SpeechAdaptation(
+            phrase_sets=[
+                cloud_speech.SpeechAdaptation.AdaptationPhraseSet(inline_phrase_set=phrase_set)
+            ]
+        )
         self.config = cloud_speech.RecognitionConfig(
             auto_decoding_config=cloud_speech.AutoDetectDecodingConfig(),
             language_codes=["en-US"],
-            model="long",
+            model="short",
+            adaptation=self.adaptation
         )
         self.client = SpeechClient()
 
+    def convert_linear16_to_flac(self, linear16_data, sample_rate=16000):
+        """Converts LINEAR16 audio data to FLAC format.
+
+        Args:
+            linear16_data: The LINEAR16 audio data as a bytes object.
+            sample_rate: The sample rate of the audio data in Hz.
+
+        Returns:
+            The FLAC-encoded audio data as a bytes object.
+        """
+
+        audio_segment = AudioSegment(
+            data=linear16_data,
+            sample_width=2,  # 2 bytes per sample for 16-bit audio
+            frame_rate=sample_rate,
+            channels=1  # Assuming mono audio
+        )
+
+        flac_data = audio_segment.export(format="flac").read()
+        return flac_data
+    
     def run(self):
             
         feature_extractor = Wav2Vec2FeatureExtractor.from_pretrained(self.model_name)
@@ -61,15 +91,16 @@ class GCPASR(Process):
                 raw_audio_bytes_array = bytearray()
                 for chunk in speech_segment.chunks:
                     raw_audio_bytes_array.extend(chunk.audio_raw)
-                audio_samples = np.frombuffer(raw_audio_bytes_array, dtype=np.int16)
-                buffer = io.BytesIO()
-                wav.write(buffer, 16000, audio_samples)
+                flac_audio_data = self.convert_linear16_to_flac(raw_audio_bytes_array)
+                #audio_samples = np.frombuffer(raw_audio_bytes_array, dtype=np.int16)
+                #buffer = io.BytesIO()
+                #wav.write(buffer, 16000, audio_samples)
                 t0 = time.perf_counter_ns()
                 audio = np.concatenate([chunk.audio_numpy_normalized[self.use_channel] for chunk in speech_segment.chunks])
                 request = cloud_speech.RecognizeRequest(
                     recognizer=f"projects/{self.project_id}/locations/global/recognizers/_",
                     config=self.config,
-                    content=buffer.read(),
+                    content=flac_audio_data,
                 )
                 response = self.client.recognize(request=request)
                 text = ""
@@ -120,7 +151,7 @@ class GCPASRPublisher(Node):
 
             asr = GCPASR(speech_segments,output_queue, ready_flag=asr_ready)
 
-            vad = VAD(audio_chunks, speech_segments, max_filter_window=10, ready_flag=vad_ready, speech_start_flag=speech_start, speech_end_flag=speech_end)
+            vad = VAD(audio_chunks, speech_segments, max_filter_window=1, ready_flag=vad_ready, speech_start_flag=speech_start, speech_end_flag=speech_end)
 
             mic = Microphone(audio_chunks)
             mon = StartEndMonitor(speech_start, speech_end)

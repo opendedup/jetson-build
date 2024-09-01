@@ -51,7 +51,7 @@ class AgentRunner:
         self.shimmy_move_client = ShimmyMoveClientAsync()
         #self.image_emb_client = FaissClientAsync("images")
         vertexai.init(project="lemmingsinthewind", location="us-central1")
-        self.image_model = GenerativeModel("gemini-1.5-flash-001",system_instruction=[image_system_instructions])
+        self.image_model = GenerativeModel("gemini-pro-experimental",system_instruction=[image_system_instructions])
         self.image_chat = self.image_model.start_chat()
         self.embmodel = MultiModalEmbeddingModel.from_pretrained("multimodalembedding")
         tools = [
@@ -60,7 +60,7 @@ class AgentRunner:
             ),
         ]
         self.wbmodel = GenerativeModel(
-            "gemini-1.5-flash-001",
+            "gemini-1.5-pro-001",
             tools=tools,
         )
         self.config = {
@@ -74,34 +74,6 @@ class AgentRunner:
             generative_models.HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT: generative_models.HarmBlockThreshold.BLOCK_NONE,
             generative_models.HarmCategory.HARM_CATEGORY_HARASSMENT: generative_models.HarmBlockThreshold.BLOCK_NONE,
         }
-        
-
-    def get_weather(self,lat,lon):
-        try:
-            n = NOAA()
-            fcs = n.points_forecast(lat,lon,hourly=False, type='forecast')['properties']['periods']
-            now = datetime.now()
-            date_time = now.strftime("%m/%d/%Y, %H:%M:%S")
-            local_now = now.astimezone()
-            local_tz = local_now.tzinfo
-            local_tzname = local_tz.tzname(local_now)
-            api_response = {"current_time": date_time, "time_zone": local_tzname,"weather":fcs[:3]}
-            print(api_response)
-            part = Part.from_function_response(
-                name="get_weather",
-                response={
-                    "content": api_response,
-                },
-            )
-        except:
-            logging.error(traceback.format_exc()) 
-            part = Part.from_function_response(
-                name="get_weather",
-                response={
-                    "content": {"error":"cannot return weather at this time"},
-                },
-            )
-        return part
 
     def add_voice(self,person,embedding,training=False):
         try:

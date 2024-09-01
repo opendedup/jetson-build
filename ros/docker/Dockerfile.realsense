@@ -1,0 +1,88 @@
+FROM us-central1-docker.pkg.dev/lemmingsinthewind/ros2/ros2base:0.2
+
+ARG ROS2_DIST=humble       # ROS2 distribution
+  
+ENV TZ=America/Los_Angeles
+
+RUN ln -snf /usr/share/zoneinfo/$TZ /etc/localtime && echo $TZ > /etc/timezone && \
+  apt remove libopencv-dev python3-opencv && \
+  apt purge -y '*opencv*' && \
+  apt-get update && \
+  apt-get upgrade -y && \
+  apt-get install -y pluginlib-dev screen libfmt-dev ffmpeg liburdfdom-tools libpng-dev libboost-all-dev \
+  nlohmann-json3-dev libboost-program-options-dev libssl-dev libwebsocketpp-dev \
+  libtinyxml-dev lsb-release wget less udev sudo build-essential cmake python3 \
+  python3-dev python3-pip python3-wheel git jq libpq-dev zstd usbutils 
+
+COPY scripts/libuvc_installation.sh /root
+WORKDIR /root/
+RUN apt remove ros-humble-librealsense2 && \
+    ./libuvc_installation.sh
+
+
+WORKDIR /root/ros2_ws/src
+RUN git clone -b humble https://github.com/ros/pluginlib.git && \  
+  git clone https://github.com/odriverobotics/ros_odrive.git && \
+  git clone -b humble https://github.com/ros-perception/vision_opencv.git && \
+  git clone https://github.com/opendedup/rtf_sensors.git && \
+  git clone https://github.com/joshnewans/twist_stamper.git && \
+  git clone https://github.com/IntelRealSense/realsense-ros.git -b ros2-master
+
+RUN  apt-get update && apt-get upgrade -y && apt install -y ros-$ROS_DISTRO-twist-mux \
+  ros-$ROS_DISTRO-foxglove-bridge
+
+WORKDIR /root/ros2_ws/
+RUN source /opt/ros/${ROS_DISTRO}/install/setup.bash && \
+  rosdep fix-permissions && \ 
+  rosdep update && \
+  rosdep install -y --from-paths src --ignore-src --rosdistro humble -r  && \
+  apt-get update &&   apt-get upgrade -y &&   apt-get install -y pluginlib-dev
+
+# Install cython
+RUN python3 -m pip install --upgrade cython && \
+    pip install -U google-cloud-aiplatform Jetson.GPIO google-cloud-speech && \
+    pip install empy Adafruit-Blinka adafruit-circuitpython-lsm6ds squaternion pyusb click && \
+    pip uninstall -y em 
+
+# Build the dependencies
+RUN /bin/bash -c "source /opt/ros/$ROS_DISTRO/setup.bash && \
+source /opt/ros/$ROS_DISTRO/install/setup.bash && \
+export MAKEFLAGS=-j6 && \
+colcon build --parallel-workers $(nproc) \
+--event-handlers console_direct+ \
+--cmake-args ' -DCMAKE_BUILD_TYPE=Release' \
+' -DCMAKE_LIBRARY_PATH=/usr/local/cuda/lib64/stubs' \
+' -DCMAKE_CXX_FLAGS="-Wl,--allow-shlib-undefined"' \
+' --no-warn-unused-cli' "
+
+RUN git clone https://github.com/introlab/rtabmap.git src/rtabmap && \
+    git clone --branch ros2 https://github.com/introlab/rtabmap_ros.git src/rtabmap_ros && \
+    apt-get update && \
+    rosdep update && rosdep install --from-paths src --ignore-src -r -y
+
+COPY scripts/s_env.sh /root/ros2_ws/
+
+RUN  /bin/bash -c "source /root/ros2_ws/s_env.sh && export MAKEFLAGS=-j2 && \
+ colcon build --symlink-install --cmake-args -DCMAKE_BUILD_TYPE=Release --packages-select \
+ rtabmap_msgs rtabmap_python rtabmap rtabmap_conversions rtabmap_rviz_plugins rtabmap_sync \
+ rtabmap_util rtabmap_odom rtabmap_slam rtabmap_viz rtabmap_demos rtabmap_examples rtabmap_launch"
+COPY resources/embeddings.jsonl /opt/shimmy/embeddings/
+COPY resources/mmembeddings.jsonl /opt/shimmy/mmembeddings/embeddings.jsonl
+COPY scripts/s_env.sh /root/ros2_ws/
+
+WORKDIR /root
+
+ADD https://api.github.com/repos/NVIDIA-AI-IOT/whisper_trt/git/refs/heads/main /tmp/whisper_trt_version.json
+    
+RUN pip3 install --no-cache-dir --verbose openai-whisper && \
+    git clone https://github.com/NVIDIA-AI-IOT/whisper_trt /opt/whisper_trt 
+
+RUN apt remove -y ros-humble-librealsense2 && \
+    rm -rf /var/lib/apt/lists/* \
+    && apt-get clean
+
+WORKDIR /root/ros2_ws
+
+# Setup environment variabless
+COPY ros_entrypoint_jetson.sh /sbin/ros_entrypoint.sh
+RUN sudo chmod 755 /sbin/ros_entrypoint.sh

@@ -39,13 +39,13 @@ This is what a typical pos message looks like
 "z":"should always be zero"
 },
 "orientation": {
-rpy:["roll angle in radians as float","pitch angle in radians as float","yaw angle in radians as float"]
+"angle": "the angle in radians as float"
 }
 }
 for  the rpy values left is positive right is negative.
 only return the message and nothing else."""
         self.nav_model = GenerativeModel(
-            "gemini-1.5-pro-001",
+            "gemini-pro-experimental",
             system_instruction=[nav_sys_intructions]
         )
         self.nav_chat = self.nav_model.start_chat()
@@ -130,7 +130,7 @@ only return the message and nothing else."""
         msg.position.x = float(pose["position"]["x"])
         msg.position.y = float(pose["position"]["y"])
         msg.position.z = float(pose["position"]["z"])
-        x, y, z, w = quaternion_from_euler(float(pose["orientation"]["rpy"][0]),float(pose["orientation"]["rpy"][1]),float(pose["orientation"]["rpy"][2]))
+        x, y, z, w = quaternion_from_euler(float(0),float(0),float(pose["orientation"]["angle"]))
         msg.orientation.x = x
         msg.orientation.y = y
         msg.orientation.z = z
@@ -178,9 +178,9 @@ if __name__ == '__main__':
 
 def quaternion_from_euler(roll, pitch, yaw):
     """
-    Converts euler roll, pitch, yaw to quaternion (w in last place)
+    Converts Euler roll, pitch, yaw to quaternion (w in last place)
     quat = [x, y, z, w]
-    Bellow should be replaced when porting for ROS 2 Python tf_conversions is done.
+    Uses ZYX convention (yaw-pitch-roll)
     """
     cy = math.cos(yaw * 0.5)
     sy = math.sin(yaw * 0.5)
@@ -190,12 +190,13 @@ def quaternion_from_euler(roll, pitch, yaw):
     sr = math.sin(roll * 0.5)
 
     q = [0] * 4
-    q[0] = cy * cp * cr + sy * sp * sr
-    q[1] = cy * cp * sr - sy * sp * cr
-    q[2] = sy * cp * sr + cy * sp * cr
-    q[3] = sy * cp * cr - cy * sp * sr
+    q[2] = sy * cp * cr - cy * sp * sr  # z 
+    q[1] = cy * sp * cr + sy * cp * sr  # y
+    q[0] = cy * cp * sr - sy * sp * cr  # x
+    q[3] = cy * cp * cr + sy * sp * sr  # w
 
     return q
+
 
 def quaternion_to_rpy(quaternion):
   """

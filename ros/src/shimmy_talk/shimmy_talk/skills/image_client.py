@@ -26,7 +26,7 @@ class ImageClientAsync(Node):
         self.depth_cli = self.create_client(GetImage, 'get_depth_image')
         while not self.cli.wait_for_service(timeout_sec=1.0):
             self.get_logger().info('service not available, waiting again...')
-        self.image_model = GenerativeModel("gemini-1.5-flash-001",system_instruction=[image_system_instructions])
+        self.image_model = GenerativeModel("gemini-pro-experimental",system_instruction=[image_system_instructions])
         self.image_chat = self.image_model.start_chat()
         self.safety_settings = {
             generative_models.HarmCategory.HARM_CATEGORY_HATE_SPEECH: generative_models.HarmBlockThreshold.BLOCK_NONE,

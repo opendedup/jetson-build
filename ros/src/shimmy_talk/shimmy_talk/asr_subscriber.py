@@ -54,7 +54,7 @@ class RivaASR_Subscriber(Node):
         )
         self.tts_service = riva.client.SpeechSynthesisService(auth)
         vertexai.init(project="lemmingsinthewind", location="us-central1")
-        model = GenerativeModel("gemini-1.5-pro-preview-0409",tools=[robot_agents])
+        model = GenerativeModel("gemini-flash-experimental",tools=[robot_agents])
         self.robot_names = self.get_parameter("robot_names").value
         self.chat = model.start_chat()
         self.config = {

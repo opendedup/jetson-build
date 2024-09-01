@@ -1,17 +1,3 @@
-# Copyright 2016 Open Source Robotics Foundation, Inc.
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#     http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
-
 from concurrent.futures import ThreadPoolExecutor
 import traceback
 import rclpy
@@ -118,7 +104,7 @@ Some Facts about you can use in context when answering questions:
             audio_encoding=texttospeech.AudioEncoding.MP3,
         )
         vertexai.init(project="lemmingsinthewind", location="us-central1")
-        model = GenerativeModel("gemini-1.5-flash-001",tools=[Tool(
+        model = GenerativeModel("gemini-flash-experimental",tools=[Tool(
         function_declarations=robot_agents)],system_instruction=[self.get_parameter("prompt").value])
         self.robot_names = self.get_parameter("robot_names").value
         
@@ -263,106 +249,108 @@ Some Facts about you can use in context when answering questions:
                 # if response.candidates[0].finish_reason.name != "FINISH_REASON_UNSPECIFIED":
                 #     self.get_logger().info("done= %s" % response.candidates[0].finish_reason)
                 #     break
-                fcmd = response.candidates[0].content.parts[0].function_call.name
-                if fcmd is not None and len(fcmd) > 0 :
-                    self.emb_cache.set(self.agent_emb[fcmd])
-                if fcmd == "use_web_browser":
-                    context = response.candidates[0].content.parts[0].function_call.args["search_txt"]
-                    api_part = self.robot_runner.use_web(context)
-                    self.get_logger().info("web API_PART = %s" % (api_part))
-                elif fcmd == "change_led_color":
-                    red =response.candidates[0].content.parts[0].function_call.args["red"]
-                    green =response.candidates[0].content.parts[0].function_call.args["green"]
-                    blue =response.candidates[0].content.parts[0].function_call.args["blue"]
-                    api_part = self.robot_runner.change_led_color(red,green,blue)
-                elif fcmd == "change_brightness":
-                    brightness =response.candidates[0].content.parts[0].function_call.args["brightness"]
-                    api_part = self.robot_runner.change_brightness(brightness)
-                elif fcmd == "get_power":
-                    api_part = self.robot_runner.get_power()
-                elif fcmd == "move_around":
-                    command =response.candidates[0].content.parts[0].function_call.args["move_instructions"]
-                    api_part = self.robot_runner.move_shimmy(command)
-                elif fcmd == "change_led_pattern":
-                    pattern =response.candidates[0].content.parts[0].function_call.args["pattern"]
-                    api_part = self.robot_runner.change_led_pattern(pattern)
-                elif fcmd == "get_time":
-                    time_zone =response.candidates[0].content.parts[0].function_call.args["time_zone"]
-                    api_part = self.robot_runner.get_current_time(time_zone)
-                elif fcmd == "remember_voice":
-                    person =response.candidates[0].content.parts[0].function_call.args["name"]
-                    if person not in self.robot_names:
-                        api_part = self.robot_runner.add_voice(person,emb)
-                    else:
+                for part in response.candidates[0].content.parts:
+                    self.get_logger().info("Part = %s" %(part))
+                    fcmd = part.function_call.name
+                    if fcmd is not None and len(fcmd) > 0 :
+                        self.emb_cache.set(self.agent_emb[fcmd])
+                    if fcmd == "use_web_browser":
+                        context = part.function_call.args["search_txt"]
+                        api_part = self.robot_runner.use_web(context)
+                        self.get_logger().info("web API_PART = %s" % (api_part))
+                    elif fcmd == "change_led_color":
+                        red =part.function_call.args["red"]
+                        green =part.function_call.args["green"]
+                        blue =part.function_call.args["blue"]
+                        api_part = self.robot_runner.change_led_color(red,green,blue)
+                    elif fcmd == "change_brightness":
+                        brightness =part.function_call.args["brightness"]
+                        api_part = self.robot_runner.change_brightness(brightness)
+                    elif fcmd == "get_power":
+                        api_part = self.robot_runner.get_power()
+                    elif fcmd == "move_around":
+                        command =part.function_call.args["move_instructions"]
+                        api_part = self.robot_runner.move_shimmy(command)
+                    elif fcmd == "change_led_pattern":
+                        pattern =part.function_call.args["pattern"]
+                        api_part = self.robot_runner.change_led_pattern(pattern)
+                    elif fcmd == "get_time":
+                        time_zone =part.function_call.args["time_zone"]
+                        api_part = self.robot_runner.get_current_time(time_zone)
+                    elif fcmd == "remember_voice":
+                        person =part.function_call.args["name"]
+                        if person not in self.robot_names:
+                            api_part = self.robot_runner.add_voice(person,emb)
+                        else:
+                            api_part = Part.from_function_response(
+                            name="remember_voice",
+                            response={
+                            "content": {"user_name":person},
+                            }
+                            )
+                            
+                    elif fcmd == "change_voice_volume":
+                        volume_percent = .10
+                        if "volume_percent" in part.function_call.args:
+                            volume_percent =part.function_call.args["volume_percent"]
+                        increase_volume =part.function_call.args["increase_volume"]
+                        nvol = self.robot_runner.change_voice_volume(volume_percent,increase_volume,self.volume_adjust)
+                        dvol = self.volume_adjust - nvol
+                        msg = f"volume was ajusted by {dvol} dB"
+                        if nvol == self.volume_adjust  and nvol > 0:
+                            msg = f"volume is already at its maximum"
+                        if nvol == self.volume_adjust  and nvol < 0:
+                            msg = f"volume is already at its minimum"
+                        self.volume_adjust = nvol
                         api_part = Part.from_function_response(
-                        name="remember_voice",
-                        response={
-                           "content": {"user_name":person},
-                        }
+                            name=msg,
+                            response={
+                                "content": "success",
+                            },
                         )
-                        
-                elif fcmd == "change_voice_volume":
-                    volume_percent = .10
-                    if "volume_percent" in response.candidates[0].content.parts[0].function_call.args:
-                        volume_percent =response.candidates[0].content.parts[0].function_call.args["volume_percent"]
-                    increase_volume =response.candidates[0].content.parts[0].function_call.args["increase_volume"]
-                    nvol = self.robot_runner.change_voice_volume(volume_percent,increase_volume,self.volume_adjust)
-                    dvol = self.volume_adjust - nvol
-                    msg = f"volume was ajusted by {dvol} dB"
-                    if nvol == self.volume_adjust  and nvol > 0:
-                        msg = f"volume is already at its maximum"
-                    if nvol == self.volume_adjust  and nvol < 0:
-                        msg = f"volume is already at its minimum"
-                    self.volume_adjust = nvol
-                    api_part = Part.from_function_response(
-                        name=msg,
-                        response={
-                            "content": "success",
-                        },
-                    )
-                    self.get_logger().info("Volume = %d" %(self.volume_adjust))
-                elif fcmd == "use_robot_eyes":
-                    req =response.candidates[0].content.parts[0].function_call.args["user_request"]
-                    prompt = f"{person} - {req}"
-                    if "additional_context" in response.candidates[0].content.parts[0].function_call.args:
-                        additional_context =response.candidates[0].content.parts[0].function_call.args["additional_context"]
-                        prompt +=f"\n*** Additional Context ***\n{additional_context}"
-                    api_part = self.robot_runner.get_image(prompt)
-                    self.get_logger().info("API_PART = %s" % (api_part))
-                elif fcmd == "stop_moving":
-                    api_part = self.robot_runner.cancel_move()
-                    self.get_logger().info("API_PART = %s" % (api_part))
-                elif fcmd == "find_object_with_eyes":
-                    req = response.candidates[0].content.parts[0].function_call.args["object"]
-                    additional_context=""
-                    if "additional_context" in response.candidates[0].content.parts[0].function_call.args:
-                        additional_context =response.candidates[0].content.parts[0].function_call.args["additional_context"]
-                    api_part = self.robot_runner.find_object(req,additional_context=additional_context)
-                    self.get_logger().info("API_PART = %s" % (api_part))
-                elif fcmd == "turn_inplace":
-                    req = response.candidates[0].content.parts[0].function_call.args["turn_instructions"]
-                    api_part = self.robot_runner.turn_shimmy(req)
-                    self.get_logger().info("API_PART = %s" % (api_part))
-                elif fcmd == "move_to_object_with_wheels":
-                    additional_context=""
-                    if "additional_context" in response.candidates[0].content.parts[0].function_call.args:
-                        additional_context =response.candidates[0].content.parts[0].function_call.args["additional_context"]
-                    movement_commands=""
-                    if "movement_commands" in response.candidates[0].content.parts[0].function_call.args:
-                        movement_commands =response.candidates[0].content.parts[0].function_call.args["movement_commands"]
-                    req = response.candidates[0].content.parts[0].function_call.args["object"]
-                    api_part = self.robot_runner.move_to_object(req,additional_context=additional_context,move_command=movement_commands)
-                    self.get_logger().info("API_PART = %s" % (api_part))
-                elif fcmd == "remember_image_objects":
-                    api_part = self.robot_runner.remember_image_objects(response.candidates[0].content.parts[0].function_call.args["picture_context"])
-                elif len(response.candidates[0].content.parts[0].text) > 0:
-                        self.text_q.put(response.candidates[0].content.parts[0].text)
-                        self.get_logger().info(response.candidates[0].content.parts[0].text)
-                if api_part != None:
-                    api_parts.append(api_part)
-                    responses = None
-                else:
-                    responses = None
+                        self.get_logger().info("Volume = %d" %(self.volume_adjust))
+                    elif fcmd == "use_robot_eyes":
+                        req =part.function_call.args["user_request"]
+                        prompt = f"{person} - {req}"
+                        if "additional_context" in part.function_call.args:
+                            additional_context =part.function_call.args["additional_context"]
+                            prompt +=f"\n*** Additional Context ***\n{additional_context}"
+                        api_part = self.robot_runner.get_image(prompt)
+                        self.get_logger().info("API_PART = %s" % (api_part))
+                    elif fcmd == "stop_moving":
+                        api_part = self.robot_runner.cancel_move()
+                        self.get_logger().info("API_PART = %s" % (api_part))
+                    elif fcmd == "find_object_with_eyes":
+                        req = part.function_call.args["object"]
+                        additional_context=""
+                        if "additional_context" in part.function_call.args:
+                            additional_context =part.function_call.args["additional_context"]
+                        api_part = self.robot_runner.find_object(req,additional_context=additional_context)
+                        self.get_logger().info("API_PART = %s" % (api_part))
+                    elif fcmd == "turn_inplace":
+                        req = part.function_call.args["turn_instructions"]
+                        api_part = self.robot_runner.turn_shimmy(req)
+                        self.get_logger().info("API_PART = %s" % (api_part))
+                    elif fcmd == "move_to_object_with_wheels":
+                        additional_context=""
+                        if "additional_context" in part.function_call.args:
+                            additional_context =part.function_call.args["additional_context"]
+                        movement_commands=""
+                        if "movement_commands" in part.function_call.args:
+                            movement_commands =part.function_call.args["movement_commands"]
+                        req = part.function_call.args["object"]
+                        api_part = self.robot_runner.move_to_object(req,additional_context=additional_context,move_command=movement_commands)
+                        self.get_logger().info("API_PART = %s" % (api_part))
+                    elif fcmd == "remember_image_objects":
+                        api_part = self.robot_runner.remember_image_objects(part.function_call.args["picture_context"])
+                    elif len(part.text) > 0:
+                            self.text_q.put(part.text)
+                            self.get_logger().info(part.text)
+                    if api_part != None:
+                        api_parts.append(api_part)
+                        responses = None
+                    else:
+                        responses = None
         if len(api_parts) > 0:
             n_responses = self.chat.send_message(
                         api_parts,generation_config=self.config,stream=True, safety_settings=self.safety_settings
@@ -403,7 +391,7 @@ Some Facts about you can use in context when answering questions:
                     txt = self.text_q.get(block=True, timeout=.3)
                     if txt is not None:
                         resp_text += txt
-                    if len(resp_text) > 50:
+                    if len(resp_text) > 20:
                         doc = nlp(resp_text)
                         sentences = [sent.text for sent in doc.sents][:-1]
                         resp_text = [sent.text for sent in doc.sents][-1]

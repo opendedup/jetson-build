@@ -18,6 +18,7 @@ from rclpy.duration import Duration
 
 from geometry_msgs.msg import Twist
 from std_msgs.msg import ( Float64, Bool)
+from rclpy.time import Time
 
 from chat_interfaces.srv import GetPose
 
@@ -147,8 +148,8 @@ class ShimmyMoveService(Node):
 
             # Go to our demos first goal pose
             goal_pose = PoseStamped()
-            goal_pose.header.frame_id = 'map'
-            goal_pose.header.stamp = navigator.get_clock().now().to_msg()
+            goal_pose.header.frame_id = 'odom'
+            goal_pose.header.stamp = Time(seconds=0, nanoseconds=0).to_msg()  # Set timestamp to 0
             goal_pose.pose = msg
 
             # sanity check a valid path exists
