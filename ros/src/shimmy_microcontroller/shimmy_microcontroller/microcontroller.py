@@ -3,6 +3,7 @@ from chat_interfaces.msg import PowerUsage
 from chat_interfaces.msg import LedBrightness
 from chat_interfaces.msg import LedColor
 from chat_interfaces.msg import LedPattern
+from chat_interfaces.msg import PaintLedColor
 
 import rclpy
 from rclpy.node import Node
@@ -62,6 +63,11 @@ class MicroControllerrService(Node):
             LedPattern,
             'ledpattern',
             self.ledpattern_callback,
+            10)
+        self.led_paint_subscription = self.create_subscription(
+            PaintLedColor,  # Subscribe to the PaintLedColor message
+            'ledpaint',
+            self.paint_leds,
             10)
         self.power_publisher_ = self.create_publisher(PowerUsage, 'powerusage', 10)
         obj = {"command":"led",'subcommand':"fill","colors":[0,0,0],"start":0,"num":64}
@@ -131,7 +137,7 @@ class MicroControllerrService(Node):
             data = f"{data}\n"
             self.serial_obj.write(data.encode("utf-8"))    #transmit 'A' (8bit) to micro/Arduino
             rcv = self.serial_obj.readline()
-            self.get_logger().info('Revieved %s' % (rcv))
+            # self.get_logger().info('Revieved %s' % (rcv))
     
     def ledcolor_callback(self, msg: LedColor):    
         with self.lock:
@@ -140,7 +146,23 @@ class MicroControllerrService(Node):
             data = f"{data}\n"
             self.serial_obj.write(data.encode("utf-8"))    #transmit 'A' (8bit) to micro/Arduino
             rcv = self.serial_obj.readline()
-            self.get_logger().info('Revieved %s' % (rcv))
+            # self.get_logger().info('Revieved %s' % (rcv))
+    
+    def paint_leds(self, msg: PaintLedColor):
+        """Sends the "paint" command to the Arduino to set individual LED colors.
+
+        Args:
+            msg: A PaintLedColor message containing a list of LedColor messages.
+        """
+        pixels = [[led_color.red, led_color.blue, led_color.green] for led_color in msg.colors]
+
+        with self.lock:
+            obj = {"command": "led", 'subcommand': "paint", "pixels": pixels}
+            data = json.dumps(obj)
+            data = f"{data}\n"
+            self.serial_obj.write(data.encode("utf-8"))
+            rcv = self.serial_obj.readline()
+            # self.get_logger().info('Received %s' % (rcv))
     
     def ledbrightness_callback(self, msg: LedBrightness):    
         with self.lock:
@@ -149,7 +171,7 @@ class MicroControllerrService(Node):
             data = f"{data}\n"
             self.serial_obj.write(data.encode("utf-8"))    #transmit 'A' (8bit) to micro/Arduino
             rcv = self.serial_obj.readline()
-            self.get_logger().info('Revieved %s' % (rcv))
+            # self.get_logger().info('Revieved %s' % (rcv))
         
 
     

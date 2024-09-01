@@ -93,7 +93,17 @@ def launch_setup(context, *args, **kwargs):
         package='shimmy_bot_utils',
         executable='node_checker',
         name='shimmy_talk_node_checker',
+        output='both',
         parameters=[{'target_nodes': ['voice_emb','m_service','image_cap_service','asr_listener']}]  # Pass the list of nodes to monitor
+    )
+    
+    startup_feedback_node = Node(
+        package='shimmy_bot_utils',
+        executable='startup_controller',
+        name='shimmy_startup_controller',
+        output='both',
+        parameters=[{'target_nodes': ['voice_emb','m_service','image_cap_service','asr_listener']}]  # Pass the list of nodes to monitor
+    
     )
     
     # launch_init_after_talk = RegisterEventHandler(
@@ -115,7 +125,8 @@ def launch_setup(context, *args, **kwargs):
         m_service,
         #img_emb,
         voice_emb,
-        node_checker
+        node_checker,
+        startup_feedback_node
         #launch_init_after_talk
     ]
 

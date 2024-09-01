@@ -32,6 +32,7 @@ rosidl_generate_interfaces(${PROJECT_NAME}
   "msg/LedBrightness.msg"
   "msg/LedColor.msg"
   "msg/LedPattern.msg"
+  "msg/PaintLedColor.msg"
   "srv/SaySomething.srv"
   "srv/GetImage.srv"
   "srv/GetPower.srv"
