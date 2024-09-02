@@ -46,7 +46,7 @@ import re
 class AgentRunner:
     def __init__(self,image_system_instructions=""):
         self.image_client = ImageClientAsync()
-        self.voice_emb_client = FaissClientAsync()
+        #self.voice_emb_client = FaissClientAsync()
         self.microcontroller_client = MicroControllerClientAsync()
         self.shimmy_move_client = ShimmyMoveClientAsync()
         #self.image_emb_client = FaissClientAsync("images")
@@ -75,33 +75,33 @@ class AgentRunner:
             generative_models.HarmCategory.HARM_CATEGORY_HARASSMENT: generative_models.HarmBlockThreshold.BLOCK_NONE,
         }
 
-    def add_voice(self,person,embedding,training=False):
-        try:
+    # def add_voice(self,person,embedding,training=False):
+    #     try:
             
-            if person == "unknown" and training is False:
-                part = Part.from_function_response(
-                name="remember_voice",
-                response={
-                    "content": {"error":"person is unknow. Tell us who you are first. Say something like \"Hey Shimmy, My name is Cindy. Remember my voice.\""},
-                },
-                )
-            else:
-                self.voice_emb_client.publish_embedding(person,embedding)
-                part = Part.from_function_response(
-                    name="remember_voice",
-                    response={
-                        "content": {"user_name":person},
-                    },
-                )
-        except:
-            logging.error(traceback.format_exc()) 
-            part = Part.from_function_response(
-                name="store_voice",
-                response={
-                    "content": {"error":"cannot store voices at this time"},
-                },
-            )
-        return part
+    #         if person == "unknown" and training is False:
+    #             part = Part.from_function_response(
+    #             name="remember_voice",
+    #             response={
+    #                 "content": {"error":"person is unknow. Tell us who you are first. Say something like \"Hey Shimmy, My name is Cindy. Remember my voice.\""},
+    #             },
+    #             )
+    #         else:
+    #             self.voice_emb_client.publish_embedding(person,embedding)
+    #             part = Part.from_function_response(
+    #                 name="remember_voice",
+    #                 response={
+    #                     "content": {"user_name":person},
+    #                 },
+    #             )
+    #     except:
+    #         logging.error(traceback.format_exc()) 
+    #         part = Part.from_function_response(
+    #             name="store_voice",
+    #             response={
+    #                 "content": {"error":"cannot store voices at this time"},
+    #             },
+    #         )
+    #     return part
     
     def change_led_color(self,red,green,blue):
         try:
@@ -339,41 +339,41 @@ In the image. In the image provided the {text_req} can be found within the follo
             )
         return part
 
-    def remember_image_objects(self,description):
-        try:
-            logging.info(description) 
-            response = self.image_client.send_request()
-            buffered = convert_image(response.image)
-            vi = VXImage(image_bytes=buffered.getvalue())
-            model = MultiModalEmbeddingModel.from_pretrained("multimodalembedding")
-            embeddings = model.get_embeddings(
-                image=vi,
-                contextual_text=description,
-                dimension=1408,
-            )
-            img_data = base64.b64encode(buffered.getvalue())
-            metadata = {
-                "data":str(img_data, 'utf-8'),
-                "mime_type":"image/jpeg",
-                "description":description
-            }
-            self.image_emb_client.publish_embedding(str(uuid.uuid4()),embeddings.image_embedding,map=metadata)
-            self.image_emb_client.publish_embedding(str(uuid.uuid4()),embeddings.text_embedding,map=metadata)
-            part = Part.from_function_response(
-                name="store_voice",
-                response={
-                    "content": {"description":description},
-                },
-            )
-        except:
-            logging.error(traceback.format_exc()) 
-            part = Part.from_function_response(
-                name="get_time",
-                response={
-                    "content": {"error":"cannot store image descriptions at this time"},
-                },
-            )
-        return part
+    # def remember_image_objects(self,description):
+    #     try:
+    #         logging.info(description) 
+    #         response = self.image_client.send_request()
+    #         buffered = convert_image(response.image)
+    #         vi = VXImage(image_bytes=buffered.getvalue())
+    #         model = MultiModalEmbeddingModel.from_pretrained("multimodalembedding")
+    #         embeddings = model.get_embeddings(
+    #             image=vi,
+    #             contextual_text=description,
+    #             dimension=1408,
+    #         )
+    #         img_data = base64.b64encode(buffered.getvalue())
+    #         metadata = {
+    #             "data":str(img_data, 'utf-8'),
+    #             "mime_type":"image/jpeg",
+    #             "description":description
+    #         }
+    #         self.image_emb_client.publish_embedding(str(uuid.uuid4()),embeddings.image_embedding,map=metadata)
+    #         self.image_emb_client.publish_embedding(str(uuid.uuid4()),embeddings.text_embedding,map=metadata)
+    #         part = Part.from_function_response(
+    #             name="store_voice",
+    #             response={
+    #                 "content": {"description":description},
+    #             },
+    #         )
+    #     except:
+    #         logging.error(traceback.format_exc()) 
+    #         part = Part.from_function_response(
+    #             name="get_time",
+    #             response={
+    #                 "content": {"error":"cannot store image descriptions at this time"},
+    #             },
+    #         )
+    #     return part
         
 
     def get_current_time(self,timezone):
@@ -570,19 +570,19 @@ This function can be used to find an object and then move to the object that was
 
     )
 
-store_voice_func = FunctionDeclaration(
-        name="remember_voice",
-        description="Capture introductions and remember someone by their voice using your robot hearing. If someone introduces themselves with statements like \"This is Sam\" or \"I'm Jenny\" or tells you to remember their voice use this function. This is useful for remembering people for later conversations or context.",
-        parameters={
-            "type": "object",
-            "properties": {
-                "name": {"type": "string", "description": "The persons's name assosiated with the voice to remember."},
+# store_voice_func = FunctionDeclaration(
+#         name="remember_voice",
+#         description="Capture introductions and remember someone by their voice using your robot hearing. If someone introduces themselves with statements like \"This is Sam\" or \"I'm Jenny\" or tells you to remember their voice use this function. This is useful for remembering people for later conversations or context.",
+#         parameters={
+#             "type": "object",
+#             "properties": {
+#                 "name": {"type": "string", "description": "The persons's name assosiated with the voice to remember."},
                 
-            },
-            "required" : ["name"],
-        },
+#             },
+#             "required" : ["name"],
+#         },
         
-)
+# )
 
 change_volume_func = FunctionDeclaration(
     name="change_voice_volume",
@@ -689,7 +689,7 @@ google_search_tool = Tool.from_google_search_retrieval(
 
 robot_agents = [
             get_time_func,
-            store_voice_func,
+            #store_voice_func,
             take_picture_function,
             web_browser,
             change_volume_func,

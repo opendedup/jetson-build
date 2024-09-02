@@ -51,8 +51,8 @@ def launch_setup(context, *args, **kwargs):
     
     riva_asr = Node(
             package='shimmy_talk',
-            executable='gcp_asr',
-            name='gcp_asr',
+            executable='gemini_asr',
+            name='asr_service',
             output='both',
             parameters=[config]
         )
@@ -94,7 +94,7 @@ def launch_setup(context, *args, **kwargs):
         executable='node_checker',
         name='shimmy_talk_node_checker',
         output='both',
-        parameters=[{'target_nodes': ['voice_emb','m_service','image_cap_service','asr_listener']}]  # Pass the list of nodes to monitor
+        parameters=[{'target_nodes': ['voice_emb','m_service','image_cap_service','asr_listener','asr_service']}]  # Pass the list of nodes to monitor
     )
     
     startup_feedback_node = Node(
@@ -102,7 +102,7 @@ def launch_setup(context, *args, **kwargs):
         executable='startup_controller',
         name='shimmy_startup_controller',
         output='both',
-        parameters=[{'target_nodes': ['voice_emb','m_service','image_cap_service','asr_listener']}]  # Pass the list of nodes to monitor
+        parameters=[{'target_nodes': ['voice_emb','m_service','image_cap_service','asr_listener','asr_service']}]  # Pass the list of nodes to monitor
     
     )
     

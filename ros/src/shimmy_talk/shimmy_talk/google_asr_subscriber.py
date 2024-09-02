@@ -39,9 +39,6 @@ from .services.stream import FIFOCache
 
 import asyncio
 
-from transformers import AutoModel, AutoTokenizer
-import torch
-
 from datetime import datetime
 
 import logging
@@ -88,7 +85,7 @@ Some Facts about you can use in context when answering questions:
         * Your eyes are a zed 2 stereo camera
         * You have a speaker you talk through
         * Your hearing is a ReSpeaker Mic Array v2.0
-        * You are Running ROS2 Humble on Ubuntu 22.04 Nvidia Jetpack 6.    
+        * You are Running ROS2 Humble on Ubuntu 22.04 Nvidia Jetpack 6.
 """)
         self.subscription  # prevent unused variable warning
         self.tts_service = texttospeech.TextToSpeechClient()
@@ -148,13 +145,6 @@ Some Facts about you can use in context when answering questions:
         t.start()
         t = threading.Thread(target=self.sound_chunker)
         t.start()
-        ctx_model_name = "Alibaba-NLP/gte-large-en-v1.5"
-        self.ctx_tokenizer = AutoTokenizer.from_pretrained(ctx_model_name)
-        self.ctx_model = AutoModel.from_pretrained(ctx_model_name, trust_remote_code=True).to("cuda")
-        self.agent_emb = {}
-        for agent in robot_agents:
-            dct = agent.to_dict()
-            self.agent_emb[dct["name"]] = self.get_ctx_embeddings([extract_text_from_dict(dct)])[0]   
         
         
  
@@ -186,10 +176,7 @@ Some Facts about you can use in context when answering questions:
         # If all of the words in the array are in the sentence, return True.
         return False
 
-    async def get_shimmy_talk_emb(self,text):
-        emb = self.get_ctx_embeddings([text])
-        with self.emb_lock:
-            self.emb_cache.set(emb[0])
+
             
             
         
@@ -199,7 +186,6 @@ Some Facts about you can use in context when answering questions:
             self.get_logger().info("processing_text %s" % (text))
             
             text = deEmojify(text)
-            asyncio.run(self.get_shimmy_talk_emb(text))
             input_text = texttospeech.SynthesisInput(text=text)
             response = self.tts_service.synthesize_speech(
                 input=input_text, voice=self.voice, audio_config=self.audio_config
@@ -210,75 +196,59 @@ Some Facts about you can use in context when answering questions:
             self.get_logger().error("an error occured")
             print(traceback.format_exc())
             
-    def get_ctx_embeddings(self,input_texts):
-        
-        batch_dict = self.ctx_tokenizer(input_texts, max_length=8192, padding=True, truncation=True, return_tensors='pt').to("cuda")
-        
-        with torch.no_grad():
-            outputs =self.ctx_model(**batch_dict)
-        emb =  outputs.last_hidden_state[:, 0]
-        return emb.cpu().detach().numpy().tolist()
     
-    def read_input(self,msg,person,distance):
-        #while not future.done():
-        #    time.sleep(0.05)
-
-        self.get_logger().info("Person %s match is %d" %(person,distance))
+    def read_input(self,msg,person):
+        self.get_logger().info("Person %s match" %(person))
         
-        if distance < 1500 and person.startswith(self.voice_name):
-            self.get_logger().info("Ignoring %s match is %d" %(person,distance))
+        if person in self.robot_names:
+            self.get_logger().info("Ignoring %s match" %(person))
         else:
-            if distance > 1500:
-                self.get_logger().info(str(distance))
-                person = "unknown"
-            self.get_logger().info(person)
-            asyncio.run(self.get_shimmy_talk_emb(msg.chat_text))
             responses = self.chat.send_message(f"{person} - \"{msg.chat_text}\"",
                                     generation_config=self.config,stream=True, safety_settings=self.safety_settings)
-            self.parse_responses(responses,msg.sid_embedding,person)
+            self.parse_responses(responses,person)
             
-    def handle_use_web_browser(self, part, emb, person):
+    def handle_use_web_browser(self, part, person):
         context = part.function_call.args["search_txt"]
         return self.robot_runner.use_web(context)
     
-    def handle_change_led_color(self, part, emb, person):
+    def handle_change_led_color(self, part, person):
         red = part.function_call.args["red"]
         green = part.function_call.args["green"]
         blue = part.function_call.args["blue"]
         return self.robot_runner.change_led_color(red, green, blue)
     
-    def handle_change_brightness(self, part, emb, person):
+    def handle_change_brightness(self, part, person):
         brightness = part.function_call.args["brightness"]
         return self.robot_runner.change_brightness(brightness)
     
-    def handle_get_power(self, part, emb, person):
+    def handle_get_power(self, part, person):
         return self.robot_runner.get_power()
 
-    def handle_move_shimmy(self, part, emb, person):
+    def handle_move_shimmy(self, part, person):
         command = part.function_call.args["move_instructions"]
         return self.robot_runner.move_shimmy(command)
 
-    def handle_change_led_pattern(self, part, emb, person):
+    def handle_change_led_pattern(self, part, person):
         pattern = part.function_call.args["pattern"]
         return self.robot_runner.change_led_pattern(pattern)
     
-    def handle_get_time(self, part, emb, person):
+    def handle_get_time(self, part, person):
         time_zone = part.function_call.args["time_zone"]
         return self.robot_runner.get_current_time(time_zone)
     
-    def handle_remember_voice(self, part, emb, person):
-        person_to_remember = part.function_call.args["name"]
-        if person_to_remember not in self.robot_names:
-            return self.robot_runner.add_voice(person_to_remember, emb)
-        else:
-            return Part.from_function_response(
-                name="remember_voice",
-                response={
-                    "content": {"user_name": person_to_remember},
-                }
-            )
+    # def handle_remember_voice(self, part, person):
+    #     person_to_remember = part.function_call.args["name"]
+    #     if person_to_remember not in self.robot_names:
+    #         return self.robot_runner.add_voice(person_to_remember, emb)
+    #     else:
+    #         return Part.from_function_response(
+    #             name="remember_voice",
+    #             response={
+    #                 "content": {"user_name": person_to_remember},
+    #             }
+    #         )
 
-    def handle_change_voice_volume(self, part, emb, person):
+    def handle_change_voice_volume(self, part, person):
         volume_percent = .10
         if "volume_percent" in part.function_call.args:
             volume_percent = part.function_call.args["volume_percent"]
@@ -298,7 +268,7 @@ Some Facts about you can use in context when answering questions:
             },
         )
     
-    def handle_use_robot_eyes(self, part, emb, person):
+    def handle_use_robot_eyes(self, part, person):
         req = part.function_call.args["user_request"]
         prompt = f"{person} - {req}"
         if "additional_context" in part.function_call.args:
@@ -306,24 +276,24 @@ Some Facts about you can use in context when answering questions:
             prompt += f"\n*** Additional Context ***\n{additional_context}"
         return self.robot_runner.get_image(prompt)
     
-    def handle_stop_moving(self, part, emb, person):
+    def handle_stop_moving(self, part, person):
         return self.robot_runner.cancel_move()
 
-    def handle_find_object(self, part, emb, person):
+    def handle_find_object(self, part, person):
         req = part.function_call.args["object"]
         additional_context = part.function_call.args.get("additional_context", "")
         return self.robot_runner.find_object(req, additional_context=additional_context)
 
-    def handle_move_to_object(self, part, emb, person):
+    def handle_move_to_object(self, part, person):
         req = part.function_call.args["object"]
         additional_context = part.function_call.args.get("additional_context", "")
         movement_commands = part.function_call.args.get("movement_commands", "")
         return self.robot_runner.move_to_object(req, additional_context=additional_context, move_command=movement_commands)
     
-    def handle_remember_image_objects(self, part, emb, person):
+    def handle_remember_image_objects(self, part, person):
         return self.robot_runner.remember_image_objects(part.function_call.args["picture_context"])
             
-    def parse_responses(self, responses, emb, person):
+    def parse_responses(self, responses, person):
         api_parts = []
 
         # Define a dictionary mapping function names to handler functions
@@ -335,7 +305,7 @@ Some Facts about you can use in context when answering questions:
             'move_around': self.handle_move_shimmy,
             'change_led_pattern': self.handle_change_led_pattern,
             'get_time': self.handle_get_time,
-            'remember_voice': self.handle_remember_voice,
+            # 'remember_voice': self.handle_remember_voice,
             'change_voice_volume': self.handle_change_voice_volume,
             'use_robot_eyes': self.handle_use_robot_eyes,
             'stop_moving': self.handle_stop_moving,
@@ -356,7 +326,7 @@ Some Facts about you can use in context when answering questions:
                     # Call the appropriate handler function if it exists
                     handler = function_handlers.get(fcmd)
                     if handler:
-                        api_part = handler(part, emb, person)  # Pass necessary arguments to the handler
+                        api_part = handler(part, person)  # Pass necessary arguments to the handler
 
                     elif len(part.text) > 0:
                         self.text_q.put(part.text)
@@ -373,7 +343,7 @@ Some Facts about you can use in context when answering questions:
             n_responses = self.chat.send_message(
                 api_parts, generation_config=self.config, stream=True, safety_settings=self.safety_settings
             )
-            self.parse_responses(n_responses, emb, person)
+            self.parse_responses(n_responses, person)
             
             
     
@@ -437,41 +407,16 @@ Some Facts about you can use in context when answering questions:
     
 
     def listener_callback(self, msg):
-        self.get_logger().info('I heard: "%s"' % msg.chat_text)
-        if len(msg.sid_embedding) > 0 and self.train_voice == True:
-                self.robot_runner.add_voice(self.train_voice_name,msg.sid_embedding,training=True)
-                self.get_logger().info('Training  %s' % self.train_voice_name)
-        emb = self.get_ctx_embeddings([msg.chat_text])[0]
-        cont_convo = False
-        with self.emb_lock:
-            ct = current_milli_time()
-            if len(self.emb_cache.cache) > 0 and (ct - self.last_response) < self.auto_response_timeout:
-                
-                mp = map_emb_distance(emb=emb,cache_emb=self.emb_cache.cache)
-                if(min(mp)<self.auto_response_threshold) and min(mp)>0.03:
-                    cont_convo = True
-        person = "unknown"
-        distance = 1600
-        if len(msg.sid_embedding) > 0:
-            result = self.robot_runner.voice_emb_client.send_request(msg.sid_embedding)
-            if len(result.embeddings) > 0:
-                emb = result.embeddings[0]
-                self.get_logger().info(result.embeddings[0].metadata)
-                metadata = json.loads(emb.metadata)
-                person  = metadata["name"]
-                distance = emb.distance
-            if distance > 1500:
-                person = "unknown"
+        cont_convo = msg.adjacency_pairs
+        
+        person = msg.person
         fpp = str(person)
         
-        if distance < 1500 and person.startswith(self.voice_name):
+        if person in self.robot_names:
             fpp = "Shimmy the Robot"
         self.append_to_file(msg.chat_text,fpp)
         if cont_convo is True or self.check(msg.chat_text,self.robot_names):
-            
-            threading.Thread(target=self.read_input, args=[msg,person,distance]).start()
-            
-
+            threading.Thread(target=self.read_input, args=[msg,person]).start()
 
 
 def convert_mp3(data, normalized=False,volume_adjust=0):

@@ -29,6 +29,7 @@ setup(
             'walley_listener = shimmy_talk.walley_asr_subscriber:main',
             'whisper_asr = shimmy_talk.whisper_asr:main',
             'gcp_asr = shimmy_talk.gcp_asr:main',
+            'gemini_asr = shimmy_talk.gemini_asr:main',
         ],
     },
 )
