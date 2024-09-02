@@ -149,7 +149,7 @@ class VAD(Process):
             output_queue: Queue,
             sample_rate: int = 16000,
             use_channel: int = 0,
-            speech_threshold: float = 0.4,
+            speech_threshold: float = 0.5,
             max_filter_window: int = 1,
             trailing_silence_frames: int = 10,  # Number of silent frames to detect end of speech
             ready_flag = None,

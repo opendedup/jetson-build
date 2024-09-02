@@ -51,9 +51,6 @@ class AgentRunner:
         self.shimmy_move_client = ShimmyMoveClientAsync()
         #self.image_emb_client = FaissClientAsync("images")
         vertexai.init(project="lemmingsinthewind", location="us-central1")
-        self.image_model = GenerativeModel("gemini-pro-experimental",system_instruction=[image_system_instructions])
-        self.image_chat = self.image_model.start_chat()
-        self.embmodel = MultiModalEmbeddingModel.from_pretrained("multimodalembedding")
         tools = [
             Tool.from_google_search_retrieval(
                 google_search_retrieval=generative_models.grounding.GoogleSearchRetrieval(disable_attribution=False)

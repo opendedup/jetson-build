@@ -20,14 +20,53 @@ import vertexai.preview.generative_models as generative_models
 
 class ImageClientAsync(Node):
 
-    def __init__(self,image_system_instructions=""):
+    def __init__(self):
         super().__init__('image_client_async')
         self.cli = self.create_client(GetImage, 'get_image')
         self.depth_cli = self.create_client(GetImage, 'get_depth_image')
         while not self.cli.wait_for_service(timeout_sec=1.0):
             self.get_logger().info('service not available, waiting again...')
+        image_system_instructions="""You are Shimmy, a helpful and creative robot who uses a camera to understand the world. You are skilled at analyzing images and providing detailed, insightful, and engaging descriptions. You can answer questions, identify objects, provide context, and offer your own observations about what you see. 
+
+Whenever a request requires you to use your vision, you will be provided with a jpeg image and a user request.
+
+You should respond to the user in a natural and conversational way, integrating information from the image with your knowledge about the world. If you cannot confidently fulfill a request from the image alone, you can ask clarifying questions. Be sure to be descriptive and let your personality shine!
+        """
         self.image_model = GenerativeModel("gemini-pro-experimental",system_instruction=[image_system_instructions])
         self.image_chat = self.image_model.start_chat()
+        
+        self.bounding_box_instructions = """
+        You are an expert object detector, capable of precisely locating objects within images. 
+        You will receive a JPEG image in base64 encoding and a text prompt describing the object to find.  
+
+        Your task is to return a JSON code block containing a dictionary where the keys are the names of objects you found and the values are their bounding boxes in the image. 
+
+        Bounding boxes should be represented as lists of 4 integers [y_min, x_min, y_max, x_max], where:
+
+        * `y_min` is the top-most y-coordinate of the bounding box (pixel position from the top of the image).
+        * `x_min` is the left-most x-coordinate of the bounding box (pixel position from the left of the image).
+        * `y_max` is the bottom-most y-coordinate of the bounding box.
+        * `x_max` is the right-most x-coordinate of the bounding box.
+
+        For example:
+        ```json
+        {
+            "apple": [100, 200, 300, 400],
+            "banana": [50, 150, 250, 350]
+        }
+        ``` 
+
+        Only return the JSON code block. Do not include any additional text or explanations.
+        """ 
+
+        # Initialize the image_model for get_bounding_box
+        self.bounding_box_model = GenerativeModel(
+            "gemini-pro-experimental", 
+            system_instruction=[self.bounding_box_instructions]
+        )
+        self.bounding_box_chat = self.bounding_box_model.start_chat()
+        
+        
         self.safety_settings = {
             generative_models.HarmCategory.HARM_CATEGORY_HATE_SPEECH: generative_models.HarmBlockThreshold.BLOCK_NONE,
             generative_models.HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT: generative_models.HarmBlockThreshold.BLOCK_NONE,
@@ -77,8 +116,6 @@ class ImageClientAsync(Node):
         What is the position of the {text_req} present in the image?
         
         {additional_context} 
-
-Output objects in JSON format with both object names and positions as a JSON object: {{ name: [y_min, x_min, y_max, x_max] }}. Put the annswer in a JSON code block.
         """
         
         print(prompt)
@@ -89,7 +126,7 @@ Output objects in JSON format with both object names and positions as a JSON obj
         
         print(dims)
         ipart = Part.from_data(data=buffered.getvalue(),mime_type="image/jpeg")
-        response = self.image_chat.send_message([prompt,ipart],
+        response = self.bounding_box_chat.send_message([prompt,ipart],
                                 generation_config=self.config,stream=False, safety_settings=self.safety_settings)
         coords = json.loads(response.text.replace("```json","").replace("```",""))
         print(coords)

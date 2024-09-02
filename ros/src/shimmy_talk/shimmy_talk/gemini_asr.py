@@ -45,7 +45,7 @@ class GEMINIASR(Process):
 
 1. **Transcribe Audio:**  Convert spoken audio into text. If you only hear noise, return an empty string for `chat_text`.
 2. **Analyze Conversation:**  Identify conversational features, focusing on adjacency pairs. 
-3. **Track Speakers:**  Use voice embeddings and introductions to remember and identify speakers. 
+3. **Track Speakers:**  Understand voices based on history and introductions to remember and identify speakers. Keep track of your voice as well. 
 
 ## Adjacency Pair Analysis
 
@@ -66,7 +66,7 @@ Always output the following JSON format:
   "chat_text": "The transcribed text from the audio.",
   "tone": "The general tone of the speaker (e.g., happy, sad, angry).",
   "number_of_persons": "The number of people speaking. If unknown, return -1.",
-  "person_talking": "The name of the person speaking, based on introductions and voice embeddings. If unknown, return 'unknown'.",
+  "person_talking": "The name of the speaker, based on introductions and conversation history. If unknown, return 'unknown'.",
   "adjacency_pairs": true  // or false
 } 
 ```
@@ -92,7 +92,7 @@ JSON Output:
         }
         self.config = {
             "max_output_tokens": 8192,
-            "temperature": 1,
+            "temperature": 0,
             "top_p": 0.95,
         }
 
@@ -144,10 +144,11 @@ JSON Output:
                                 generation_config=self.config,stream=False, safety_settings=self.safety_settings)
                 dialog = json.loads(response.text.replace("```json","").replace("```",""))
                 print(dialog)
-                t1 = time.perf_counter_ns()
-                dialog["time"] = (t1 - t0) / 1e9
-                t1 = time.perf_counter_ns()
-                self.output_queue.put(dialog)
+                if len(dialog["chat_text"]) > 0:
+                    t1 = time.perf_counter_ns()
+                    dialog["time"] = (t1 - t0) / 1e9
+                    t1 = time.perf_counter_ns()
+                    self.output_queue.put(dialog)
             except:
                 print('Failed turning sound into text')
                 print('%s' % traceback.format_exc())
