@@ -11,9 +11,9 @@ import numpy as np
 
 class ImageClientAsync(Node):
 
-    def __init__(self):
+    def __init__(self,namespace="/shimmy_bot"):
         super().__init__('image_client_async')
-        self.cli = self.create_client(GetImage, 'get_image')
+        self.cli = self.create_client(GetImage, f'{namespace}/get_image')
         while not self.cli.wait_for_service(timeout_sec=1.0):
             self.get_logger().info('service not available, waiting again...')
 

@@ -46,11 +46,11 @@ from logging.handlers import RotatingFileHandler
 
 class GoogleASRSubscriber(Node):
 
-    def __init__(self):
+    def __init__(self,namespace="/shimmy_bot"):
         super().__init__('google_asr_subscriber')
         self.subscription = self.create_subscription(
             Chat,
-            'asr',
+            f'{namespace}/asr',
             self.listener_callback,
             10)
         self.declare_parameter('sound_device',"miniDSP")
@@ -145,6 +145,8 @@ Some Facts about you can use in context when answering questions:
         t.start()
         t = threading.Thread(target=self.sound_chunker)
         t.start()
+        self.stop_speaking_event = threading.Event()  # Event to stop audio playback
+        self.stop_text_generation_event = threading.Event()  # Event to stop text generation
         
         
  
@@ -236,17 +238,17 @@ Some Facts about you can use in context when answering questions:
         time_zone = part.function_call.args["time_zone"]
         return self.robot_runner.get_current_time(time_zone)
     
-    # def handle_remember_voice(self, part, person):
-    #     person_to_remember = part.function_call.args["name"]
-    #     if person_to_remember not in self.robot_names:
-    #         return self.robot_runner.add_voice(person_to_remember, emb)
-    #     else:
-    #         return Part.from_function_response(
-    #             name="remember_voice",
-    #             response={
-    #                 "content": {"user_name": person_to_remember},
-    #             }
-    #         )
+    def handle_remember_voice(self, part, person):
+        person_to_remember = part.function_call.args["name"]
+        if person_to_remember not in self.robot_names:
+            return self.robot_runner.add_voice(person_to_remember, emb)
+        else:
+            return Part.from_function_response(
+                name="remember_voice",
+                response={
+                    "content": {"user_name": person_to_remember},
+                }
+            )
 
     def handle_change_voice_volume(self, part, person):
         volume_percent = .10
@@ -305,7 +307,7 @@ Some Facts about you can use in context when answering questions:
             'move_around': self.handle_move_shimmy,
             'change_led_pattern': self.handle_change_led_pattern,
             'get_time': self.handle_get_time,
-            # 'remember_voice': self.handle_remember_voice,
+            'remember_voice': self.handle_remember_voice,
             'change_voice_volume': self.handle_change_voice_volume,
             'use_robot_eyes': self.handle_use_robot_eyes,
             'stop_moving': self.handle_stop_moving,
@@ -314,7 +316,7 @@ Some Facts about you can use in context when answering questions:
             'remember_image_objects': self.handle_remember_image_objects,
         }
 
-        while responses is not None:
+        while responses is not None and not self.stop_text_generation_event.is_set():
             for response in responses:
                 api_part = None
                 self.get_logger().info("CMD = %s" % (response.candidates[0]))
@@ -331,7 +333,10 @@ Some Facts about you can use in context when answering questions:
                     elif len(part.text) > 0:
                         self.text_q.put(part.text)
                         self.get_logger().info(part.text)
-
+                    if self.stop_text_generation_event.is_set(): # Check for interruption
+                        responses = None # Stop processing responses
+                        api_parts = []
+                        break # Exit 'for' loop
                     if api_part is not None:
                         api_parts.append(api_part)
                         responses = None  # Break out of the inner loop
@@ -348,19 +353,25 @@ Some Facts about you can use in context when answering questions:
             
     
     def sound_chunker(self):
-        block_size=1024
+        block_size = 1024
         while True:
             try:
                 self.get_logger().info("waiting for audio block")
                 audio_task = self.audio_q.get(block=True)
                 self.get_logger().info("got audio block")
                 wf = wave.open(audio_task.result())
-                
+
                 data = wf.readframes(block_size)
 
-                while data != b'':
+                while data != b'' and not self.stop_speaking_event.is_set():  # Check the event
                     self.stream.write(data)
                     data = wf.readframes(block_size)
+
+                # If stopped due to the event, clear the audio queue 
+                if self.stop_speaking_event.is_set(): 
+                    while not self.audio_q.empty():
+                        self.audio_q.get_nowait() 
+                    self.stop_speaking_event.clear()  # Reset the event for next time!
                 self.last_response = current_milli_time()
             except queue.Empty:
                 time.sleep(0.05)
@@ -407,16 +418,23 @@ Some Facts about you can use in context when answering questions:
     
 
     def listener_callback(self, msg):
-        cont_convo = msg.adjacency_pairs
-        
         person = msg.person
-        fpp = str(person)
-        
+        # Log the transcript (use 'Shimmy the Robot' if the person is the robot itself)
+        speaker_name = "Shimmy the Robot" if person in self.robot_names else person
+        self.append_to_file(msg.chat_text, speaker_name)
+        # Ignore messages from the robot itself
         if person in self.robot_names:
-            fpp = "Shimmy the Robot"
-        self.append_to_file(msg.chat_text,fpp)
-        if cont_convo is True or self.check(msg.chat_text,self.robot_names):
-            threading.Thread(target=self.read_input, args=[msg,person]).start()
+            self.get_logger().info(f"Ignoring message from {person}")
+            return  # Exit early 
+        # Respond if the message is part of an adjacency pair or addressed to the robot
+        if msg.adjacency_pairs or self.check(msg.chat_text, self.robot_names):
+            if msg.stop_talking:
+                self.stop_speaking_event.set() 
+                self.stop_text_generation_event.set() 
+                time.sleep(1) # Brief delay
+            else:
+                threading.Thread(target=self.read_input, args=[msg, person]).start()
+            
 
 
 def convert_mp3(data, normalized=False,volume_adjust=0):

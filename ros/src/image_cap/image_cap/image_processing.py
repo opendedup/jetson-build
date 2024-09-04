@@ -24,14 +24,14 @@ class FIFOCache:
 
 class ProcessImage_Subscriber(Node):
 
-    def __init__(self):
+    def __init__(self,namespace="/shimmy_bot"):
         super().__init__('process_image_subscriber')
         self.bridge = CvBridge()
         self.fifo = FIFOCache(10)
         self.depth_fifo = FIFOCache(10)
         self.lock = threading.Lock()
-        self.srv = self.create_service(GetImage, 'get_image', self.get_image)
-        self.depth_srv = self.create_service(GetImage, 'get_depth_image', self.get_depth_image)
+        self.srv = self.create_service(GetImage, f'{namespace}/get_image', self.get_image)
+        self.depth_srv = self.create_service(GetImage, f'{namespace}/get_depth_image', self.get_depth_image)
         self.image_subscription = self.create_subscription(
             SImage,
             'image_raw',

@@ -10,7 +10,7 @@ import json
 
 class MicroControllerClientAsync(Node):
 
-    def __init__(self,namespace=''):
+    def __init__(self,namespace='/shimmy_bot'):
         super().__init__('microcontroller_client')
         self.cli = self.create_client(GetPower, f"{namespace}/get_power")
         self.ledbrightness_publisher = self.create_publisher(LedBrightness, f'{namespace}/ledbrightness', 10)

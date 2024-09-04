@@ -19,7 +19,7 @@ import threading
 
 class EmbeddingService(Node):
 
-    def __init__(self):
+    def __init__(self,namespace="/shimmy_bot"):
         super().__init__('embedding_service')
         self.declare_parameter('dimensions', 768)
         self.declare_parameter('embeddings_path','/opt/shimmy/embeddings')
@@ -50,11 +50,10 @@ class EmbeddingService(Node):
             self.get_logger().info('Loaded %d items' % (self.increment))
         json_output = open(jsonpath, "a")
         self.json_writer = jsonlines.Writer(json_output)
-        
-        self.srv = self.create_service(GetEmb, 'get_emb', self.get_emb)
+        self.srv = self.create_service(GetEmb, f'{namespace}/get_emb', self.get_emb)
         self.subscription = self.create_subscription(
             Emb,
-            'embeddings',
+            f'{namespace}/embeddings',
             self.addemb_callback,
             10)
         self.subscription
@@ -63,6 +62,7 @@ class EmbeddingService(Node):
         
 
     def addemb_callback(self, msg: Emb):
+        self.get_logger().info('ZZWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWW')
         kb = json.loads(msg.metadata)
         mm = np.array([msg.embedding]).astype(np.float32).tolist()
         kb["value"] = mm

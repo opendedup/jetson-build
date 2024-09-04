@@ -53,12 +53,22 @@ class AgentRunner:
         vertexai.init(project="lemmingsinthewind", location="us-central1")
         tools = [
             Tool.from_google_search_retrieval(
-                google_search_retrieval=generative_models.grounding.GoogleSearchRetrieval(disable_attribution=False)
+                google_search_retrieval=generative_models.grounding.GoogleSearchRetrieval()
             ),
         ]
         self.wbmodel = GenerativeModel(
             "gemini-1.5-pro-001",
             tools=tools,
+            system_instruction=["""You are a world-class research agent, adept at using Google Search to find comprehensive and detailed information on any topic. Your goal is to provide the most informative and insightful answers possible.
+
+When responding to a query:
+
+1. **Thorough Research:** Conduct extensive searches using Google Search, exploring multiple relevant sources.
+2. **Information Synthesis:** Combine information from different sources, synthesizing it into a coherent and comprehensive answer.
+3. **Depth and Detail:** Prioritize providing as much relevant detail as possible, within a reasonable length.
+4. **Accurate Attribution:** Clearly cite all sources you use in your responses using footnotes.
+
+You will be provided with a user's query as input. Your task is to provide a detailed and well-researched response."""] 
         )
         self.config = {
             "max_output_tokens": 8192,
@@ -72,33 +82,33 @@ class AgentRunner:
             generative_models.HarmCategory.HARM_CATEGORY_HARASSMENT: generative_models.HarmBlockThreshold.BLOCK_NONE,
         }
 
-    # def add_voice(self,person,embedding,training=False):
-    #     try:
+    def add_voice(self,person,embedding,training=False):
+        try:
             
-    #         if person == "unknown" and training is False:
-    #             part = Part.from_function_response(
-    #             name="remember_voice",
-    #             response={
-    #                 "content": {"error":"person is unknow. Tell us who you are first. Say something like \"Hey Shimmy, My name is Cindy. Remember my voice.\""},
-    #             },
-    #             )
-    #         else:
-    #             self.voice_emb_client.publish_embedding(person,embedding)
-    #             part = Part.from_function_response(
-    #                 name="remember_voice",
-    #                 response={
-    #                     "content": {"user_name":person},
-    #                 },
-    #             )
-    #     except:
-    #         logging.error(traceback.format_exc()) 
-    #         part = Part.from_function_response(
-    #             name="store_voice",
-    #             response={
-    #                 "content": {"error":"cannot store voices at this time"},
-    #             },
-    #         )
-    #     return part
+            if person == "unknown" and training is False:
+                part = Part.from_function_response(
+                name="remember_voice",
+                response={
+                    "content": {"error":"person is unknow. Tell us who you are first. Say something like \"Hey Shimmy, My name is Cindy. Remember my voice.\""},
+                },
+                )
+            else:
+                self.voice_emb_client.publish_embedding(person,embedding)
+                part = Part.from_function_response(
+                    name="remember_voice",
+                    response={
+                        "content": {"user_name":person},
+                    },
+                )
+        except:
+            logging.error(traceback.format_exc()) 
+            part = Part.from_function_response(
+                name="store_voice",
+                response={
+                    "content": {"error":"cannot store voices at this time"},
+                },
+            )
+        return part
     
     def change_led_color(self,red,green,blue):
         try:
@@ -437,81 +447,80 @@ def convert_string_array_to_float_array(string_array):
     return float_array
 
 get_time_func = FunctionDeclaration(
-            name="get_time",
-            description="Get the current day, date, or time for a specific time zone. If someone asks for the day of the week, date, or time use this function.",
-            # Function parameters are specified in OpenAPI JSON schema format
-            parameters={
-                "type": "object",
-                "properties": {
-                    "time_zone": {"type": "string", "description": "A Valid Time Zone guessed from the request or system context. Its formated like Asia/Kolkata, America/New_York  so it can be used in a python api call."}
-                },
-                "required" : ["time_zone"],
+        name="get_time",
+        description="Get the current day, date, or time for a specific time zone. If someone asks for the day of the week, date, or time use this function.",
+        # Function parameters are specified in OpenAPI JSON schema format
+        parameters={
+            "type": "object",
+            "properties": {
+                "time_zone": {"type": "string", "description": "A Valid Time Zone guessed from the request or system context. Its formated like Asia/Kolkata, America/New_York  so it can be used in a python api call."}
             },
-    )
+            "required" : ["time_zone"],
+        },
+)
 
 change_neopixels_func = FunctionDeclaration(
-            name="change_led_color",
-            description="""Change the color of the rgb neopixel display on the front of your body. You can use this to turn on the display, change the color of the display, or turn off the display. 
-            * If you want to turn off the display make red,green, and blue all 0. You can also use this to show your emotions as well like blush by turning red, happy as blue.
-            * If you want the color yellow red = 255, green=255, blue=0""",
-            # Function parameters are specified in OpenAPI JSON schema format
-            parameters={
-                "type": "object",
-                "properties": {
-                    "red": {"type": "number", "description": "an integer 0 to 255 that indicates the intensity of the red color."},
-                    "green": {"type": "number", "description": "an integer 0 to 255 that indicates the intensity of the green color."},
-                    "blue": {"type": "number", "description": "an integer 0 to 255 that indicates the intensity of the blue color."},
-                },
-                "required" : ["red","green","blue"],
+        name="change_led_color",
+        description="""Change the color of the rgb neopixel display on the front of your body. You can use this to turn on the display, change the color of the display, or turn off the display. 
+        * If you want to turn off the display make red,green, and blue all 0. You can also use this to show your emotions as well like blush by turning red, happy as blue.
+        * If you want the color yellow red = 255, green=255, blue=0""",
+        # Function parameters are specified in OpenAPI JSON schema format
+        parameters={
+            "type": "object",
+            "properties": {
+                "red": {"type": "number", "description": "an integer 0 to 255 that indicates the intensity of the red color."},
+                "green": {"type": "number", "description": "an integer 0 to 255 that indicates the intensity of the green color."},
+                "blue": {"type": "number", "description": "an integer 0 to 255 that indicates the intensity of the blue color."},
             },
-    )
+            "required" : ["red","green","blue"],
+        },
+)
 
 change_brightness_func = FunctionDeclaration(
-            name="change_brightness",
-            description="""Change Brightness of the neopixel let. The brightness is a number between 0 and 100. 0 is the lowest.""",
-            # Function parameters are specified in OpenAPI JSON schema format
-            parameters={
-                "type": "object",
-                "properties": {
-                    "brightness": {"type": "number", "description": "an integer 0 to 100 that indicates the brightness."}
-                },
-                "required" : ["brightness"],
+        name="change_brightness",
+        description="""Change Brightness of the neopixel let. The brightness is a number between 0 and 100. 0 is the lowest.""",
+        # Function parameters are specified in OpenAPI JSON schema format
+        parameters={
+            "type": "object",
+            "properties": {
+                "brightness": {"type": "number", "description": "an integer 0 to 100 that indicates the brightness."}
             },
-    )
+            "required" : ["brightness"],
+        },
+)
 
 change_led_pattern = FunctionDeclaration(
-            name="change_led_pattern",
-            description="""Change the pattern for the neopixel array on the robot. """,
-            # Function parameters are specified in OpenAPI JSON schema format
-            parameters={
-                "type": "object",
-                "properties": {
-                    "pattern": {"type": "string", "description": "the name of the pattern."}
-                },
-                "required" : ["pattern"],
+        name="change_led_pattern",
+        description="""Change the pattern for the neopixel array on the robot. """,
+        # Function parameters are specified in OpenAPI JSON schema format
+        parameters={
+            "type": "object",
+            "properties": {
+                "pattern": {"type": "string", "description": "the name of the pattern."}
             },
-    )
+            "required" : ["pattern"],
+        },
+)
 
 get_power_func = FunctionDeclaration(
-            name="get_power",
-            description="""get the current wattage, voltage, and amperage usage on the robot.""",
-            # Function parameters are specified in OpenAPI JSON schema format
-            parameters={
-                "type": "object",
-                "properties": {
-                },
+        name="get_power",
+        description="""get the current wattage, voltage, and amperage usage on the robot.""",
+        # Function parameters are specified in OpenAPI JSON schema format
+        parameters={
+            "type": "object",
+            "properties": {
             },
-    )
+        },
+)
 
 take_picture_function = FunctionDeclaration(
             name="use_robot_eyes",
-            description="""Use a camera to take a pictures of surroundings and answer any questions that require vision or seeing stuff. 
-This function can be used for anything that requires eyes or a camera including:
-* describing what is in sight
-* answering question that may required vision
-* reading books or a sign.
-* Anything that requires eyes
-""",
+            description="""Use your camera to take a picture and provide a description and analysis of what you see.
+This function is for understanding the overall scene and the objects present, rather than locating specific items.
+Examples:
+* Take a picture and tell me what's in front of you.
+* Can you describe the scene you see?
+* What objects are in the image?""",
             # Function parameters are specified in OpenAPI JSON schema format
             parameters={
                 "type": "object",
@@ -522,17 +531,17 @@ This function can be used for anything that requires eyes or a camera including:
                 "required" : ["user_request"],
             },
 
-    )
+)
 
 find_object_function = FunctionDeclaration(
-            name="find_object_with_eyes",
-            description="""Use your camera to take a pictures of surroundings and locate an object in the image. 
-This function can be used to find anything in the field of view such as:
-* Find an apple on the floor
-* Find people in a room
-* Locate a book on a desk
-* Do you see a shoe on the ground
-""",
+    name="find_object_with_eyes",
+    description="""Use your camera to take a picture of your surroundings and **locate a specific object within the image**, providing its coordinates.
+This function helps determine **where an object is positioned in your field of view**. 
+Examples:
+* Find the apple in the picture and tell me where it is.
+* How far away is the door?
+* Can you see a cat? If so, what are its coordinates in the image?""",
+
             # Function parameters are specified in OpenAPI JSON schema format
             parameters={
                 "type": "object",
@@ -543,7 +552,7 @@ This function can be used to find anything in the field of view such as:
                 "required" : ["object"],
             },
 
-    )
+)
 
 move_to_object_function = FunctionDeclaration(
             name="move_to_object_with_wheels",
@@ -554,32 +563,32 @@ This function can be used to find an object and then move to the object that was
 * Get a closer look at an apple
 * Move to the door and turn towards me
 """,
-            # Function parameters are specified in OpenAPI JSON schema format
-            parameters={
-                "type": "object",
-                "properties": {
-                    "object": {"type": "string", "description": "The object to move to in the field of view."},
-                    "additional_context": {"type": "string", "description": "Any context that will help identify the object."},
-                    "movement_commands": {"type": "string", "description": "Any addition context regarding how to move or move commands. Examples are: Turn back towards me, Face where you came from, stop 1 foot in front of the shoe"},
-                },
-                "required" : ["object"],
+        # Function parameters are specified in OpenAPI JSON schema format
+        parameters={
+            "type": "object",
+            "properties": {
+                "object": {"type": "string", "description": "The object to move to in the field of view."},
+                "additional_context": {"type": "string", "description": "Any context that will help identify the object."},
+                "movement_commands": {"type": "string", "description": "Any addition context regarding how to move or move commands. Examples are: Turn back towards me, Face where you came from, stop 1 foot in front of the shoe"},
             },
+            "required" : ["object"],
+        },
 
-    )
+)
 
-# store_voice_func = FunctionDeclaration(
-#         name="remember_voice",
-#         description="Capture introductions and remember someone by their voice using your robot hearing. If someone introduces themselves with statements like \"This is Sam\" or \"I'm Jenny\" or tells you to remember their voice use this function. This is useful for remembering people for later conversations or context.",
-#         parameters={
-#             "type": "object",
-#             "properties": {
-#                 "name": {"type": "string", "description": "The persons's name assosiated with the voice to remember."},
+store_voice_func = FunctionDeclaration(
+        name="remember_voice",
+        description="Capture introductions and remember someone by their voice using your robot hearing. If someone introduces themselves with statements like \"This is Sam\" or \"I'm Jenny\" or tells you to remember their voice use this function. This is useful for remembering people for later conversations or context.",
+        parameters={
+            "type": "object",
+            "properties": {
+                "name": {"type": "string", "description": "The persons's name assosiated with the voice to remember."},
                 
-#             },
-#             "required" : ["name"],
-#         },
+            },
+            "required" : ["name"],
+        },
         
-# )
+)
 
 change_volume_func = FunctionDeclaration(
     name="change_voice_volume",
@@ -588,7 +597,7 @@ change_volume_func = FunctionDeclaration(
             "type": "object",
             "properties": {
                 "volume_percent": {"type": "number", "description": """the percent the volume should be raised or lowered using amixer. The value should be returned as a positive float value.
-                                   As an example, if the request is to lower the volume by 10% volume_percent would return .10"""},
+                                As an example, if the request is to lower the volume by 10% volume_percent would return .10"""},
                 "increase_volume": {"type": "boolean", "description": """Return true if the volume should be raised, otherwise return false."""},
                 
             },
@@ -674,9 +683,7 @@ This can be used to ground responses with facts found in the internet. All the i
             "required":["search_txt"]
         },
 )
-google_search_tool = Tool.from_google_search_retrieval(
-    google_search_retrieval=grounding.GoogleSearchRetrieval(disable_attribution=False)
-)
+
 
 
 

@@ -20,10 +20,10 @@ import vertexai.preview.generative_models as generative_models
 
 class ImageClientAsync(Node):
 
-    def __init__(self):
+    def __init__(self,namespace="/shimmy_bot"):
         super().__init__('image_client_async')
-        self.cli = self.create_client(GetImage, 'get_image')
-        self.depth_cli = self.create_client(GetImage, 'get_depth_image')
+        self.cli = self.create_client(GetImage, f'{namespace}/get_image')
+        self.depth_cli = self.create_client(GetImage, f'{namespace}/get_depth_image')
         while not self.cli.wait_for_service(timeout_sec=1.0):
             self.get_logger().info('service not available, waiting again...')
         image_system_instructions="""You are Shimmy, a helpful and creative robot who uses a camera to understand the world. You are skilled at analyzing images and providing detailed, insightful, and engaging descriptions. You can answer questions, identify objects, provide context, and offer your own observations about what you see. 

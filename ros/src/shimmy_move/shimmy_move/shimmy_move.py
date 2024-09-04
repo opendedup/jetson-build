@@ -24,11 +24,11 @@ from chat_interfaces.srv import GetPose
 
 class ShimmyMoveService(Node):
 
-    def __init__(self,namespace=''):
+    def __init__(self,namespace='/shimmy_bot'):
         super().__init__('shimmy_move_service')
         self.move_subscription = self.create_subscription(
             Pose,
-            f'{namespace}/shimmy_bot/move',
+            f'{namespace}/move',
             self.listener_callback,
             10)
         
@@ -39,8 +39,8 @@ class ShimmyMoveService(Node):
         # Create a publisher for Twist messages
         self.twist_publisher = self.create_publisher(Twist, '/cmd_vel', 10)
         self.nav_publisher = self.create_publisher(PoseStamped, '/goal_pose', 10)
-        self.moving_publisher = self.create_publisher(Bool, '/shimmy_bot/moving', 10)
-        self.pose_svc = self.create_service(GetPose, '/shimmy_bot/get_pose', self.get_pose)
+        self.moving_publisher = self.create_publisher(Bool, f'{namespace}/moving', 10)
+        self.pose_svc = self.create_service(GetPose, f'{namespace}/get_pose', self.get_pose)
 
         # Create a subscriber for target angle
         self.target_angle_subscription = self.create_subscription(

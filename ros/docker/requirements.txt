@@ -14,7 +14,7 @@ confection==0.1.4
 contourpy==1.1.1
 cycler==0.12.1
 cymem==2.0.8
-Cython==3.0.10
+Cython
 decorator==5.1.1
 docstring_parser==0.16
 docutils==0.20.1
@@ -70,8 +70,7 @@ networkx==3.1
 noaa-sdk==0.1.21
 numba==0.58.1
 numpy==1.24.4
-nvidia-riva-client==2.15.1
-opencv-python==4.9.0.80
+opencv-python
 packaging==24.0
 pandas==2.0.3
 pillow==10.3.0
@@ -80,7 +79,6 @@ pluggy==1.4.0
 pooch==1.8.1
 preshed==3.0.9
 proto-plus==1.23.0
-protobuf==4.25.3
 psrecord==1.2
 psutil==5.9.8
 pyasn1==0.6.0
@@ -96,7 +94,6 @@ pytest-repeat==0.9.3
 pytest-rerunfailures==14.0
 python-dateutil==2.9.0.post0
 pytz
-pyusb==1.2.1
 regex==2023.12.25
 requests==2.31.0
 rsa==4.9
@@ -130,3 +127,11 @@ vertexai
 wasabi==1.1.2
 weasel==0.3.4
 zipp==3.18.1
+Jetson.GPIO 
+google-cloud-speech
+Adafruit-Blinka 
+adafruit-circuitpython-lsm6ds 
+squaternion 
+pyusb 
+protobuf
+

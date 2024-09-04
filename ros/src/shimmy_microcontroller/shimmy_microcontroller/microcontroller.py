@@ -22,7 +22,7 @@ import serial
 
 class MicroControllerrService(Node):
 
-    def __init__(self):
+    def __init__(self,namespace=f'/shimmy_bot'):
         super().__init__('microcontroller_service')
         self.declare_parameter('serial_device', "")
         self.serial_device = self.get_parameter("serial_device").value
@@ -48,28 +48,28 @@ class MicroControllerrService(Node):
         self.serial_obj.stopbits = 1   # Number of Stop bits = 1
         
         
-        self.srv = self.create_service(GetPower, 'get_power', self.get_power)
+        self.srv = self.create_service(GetPower, f'{namespace}/get_power', self.get_power)
         self.led_brightness_subscription = self.create_subscription(
             LedBrightness,
-            'ledbrightness',
+            f'{namespace}/ledbrightness',
             self.ledbrightness_callback,
             10)
         self.led_color_subscription = self.create_subscription(
             LedColor,
-            'ledcolor',
+            f'{namespace}/ledcolor',
             self.ledcolor_callback,
             10)
         self.led_pattern_subscription = self.create_subscription(
             LedPattern,
-            'ledpattern',
+            f'{namespace}/ledpattern',
             self.ledpattern_callback,
             10)
         self.led_paint_subscription = self.create_subscription(
             PaintLedColor,  # Subscribe to the PaintLedColor message
-            'ledpaint',
+            f'{namespace}/ledpaint',
             self.paint_leds,
             10)
-        self.power_publisher_ = self.create_publisher(PowerUsage, 'powerusage', 10)
+        self.power_publisher_ = self.create_publisher(PowerUsage, f'{namespace}/powerusage', 10)
         obj = {"command":"led",'subcommand':"fill","colors":[0,0,0],"start":0,"num":64}
         data=json.dumps(obj)
         data = f"{data}\n"

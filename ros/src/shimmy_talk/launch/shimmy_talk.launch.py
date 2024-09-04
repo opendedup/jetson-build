@@ -24,7 +24,7 @@ def launch_setup(context, *args, **kwargs):
             executable='service',
             output='both',
             parameters=[
-                {"dimensions": 1251}
+                {"dimensions": 512}
             ]
         )
     

@@ -14,6 +14,7 @@ from collections import deque
 from dataclasses import dataclass
 from contextlib import contextmanager
 from typing import Optional
+
 from .utils import adjust_angle
 from .usb_4_mic_array import Tuning
 import usb.core
@@ -28,6 +29,14 @@ import json
 import vertexai
 from vertexai.generative_models import GenerativeModel, Part
 import vertexai.generative_models as generative_models
+from pyannote.audio import Model
+from pyannote.audio import Inference
+import torch 
+import os
+
+from embeddings.srv import GetEmb
+from embeddings.msg import Emb
+
 
 
 
@@ -41,11 +50,28 @@ class GEMINIASR(Process):
         self.output_queue = output_queue
         self.model_name = "superb/wav2vec2-large-superb-sid"
         vertexai.init(project="lemmingsinthewind", location="us-central1")
-        system_prompt = """You are Shimmy, a robot with advanced audio processing capabilities. Your primary task is to:
+        system_prompt = """
+You are Shimmy, a robot with advanced audio processing capabilities. Your primary task is to:
 
-1. **Transcribe Audio:**  Convert spoken audio into text. If you only hear noise, return an empty string for `chat_text`.
-2. **Analyze Conversation:**  Identify conversational features, focusing on adjacency pairs. 
-3. **Track Speakers:**  Understand voices based on history and introductions to remember and identify speakers. Keep track of your voice as well. 
+1. **Transcribe Audio:** Convert spoken audio into text. You are an expert at transcription. If you only hear noise, return an empty string for `chat_text`.
+2. **Analyze Conversation:** Identify conversational features, focusing on adjacency pairs. 
+3. **Track Speakers:** Understand voices based on history and introductions to remember and identify speakers. 
+
+## Key Point: Recognizing Your Own Voice
+
+You have a text-to-speech system that allows you to speak.  **You should be able to recognize your own synthesized voice and never identify it as a separate speaker.** 
+If you do hear yourself, return your name in "person_talking" This is super important, otherwise you will end up having a conversation with yourself.
+
+## Speaker Identification
+
+Pay close attention to how people introduce themselves. Common phrases include:
+* "Hi, I'm [name]."
+* "My name is [name]."
+* "This is [name]."
+
+Also, look for passive utterances of names, where someone might refer to another person:
+* "Is [name] coming today?"
+* "Tell [name] I said hello."
 
 ## Adjacency Pair Analysis
 
@@ -55,7 +81,10 @@ An adjacency pair is a two-part exchange in a conversation where the second utte
 * **Request/Response:** "Could you turn on the lights?" - "Sure, turning them on now."
 * **Greeting/Greeting:** "Hello!" - "Hi there!"
 
-Set the `adjacency_pairs` field to `true` if the current utterance is part of an adjacency pair related to the ongoing conversation with Shimmy. Otherwise, set it to `false`. 
+You will be provided with a short history of the conversation in the `conversation_history` field. Use this context to determine if the current utterance is part of an adjacency pair.
+
+Set the `adjacency_pairs` field to `true` if the current utterance is part of an adjacency pair related to the ongoing conversation with you (Shimmy). Otherwise, set it to `false`. 
+Set the `stop_talking` field to `true` if the current utterance is requesting that you stop talking.
 
 ## Output Format
 
@@ -66,24 +95,76 @@ Always output the following JSON format:
   "chat_text": "The transcribed text from the audio.",
   "tone": "The general tone of the speaker (e.g., happy, sad, angry).",
   "number_of_persons": "The number of people speaking. If unknown, return -1.",
-  "person_talking": "The name of the speaker, based on introductions and conversation history. If unknown, return 'unknown'.",
+  "person_talking": "The name of the speaker, base on the critera in Speaker Identification section and Recognizing Your Own Voice section above. If unknown, return 'unknown'.",
   "adjacency_pairs": true  // or false
-} 
+  "stop_talking": true // or false,
+  "conversation_history": ["Turn 1", "Turn 2", ... , "Current Utterance"]
+}
 ```
-Example
-Audio: "Hey Shimmy, what time is it?"
+Examples
+
+Conversation History:
+"Hey Shimmy, what time is it?"
+"It is 3:45 PM." (Shimmy's voice)
+
+Current Utterance: "Thanks!"
 JSON Output:
 {
-  "chat_text": "Hey Shimmy, what time is it?",
-  "tone": "neutral",
+  "chat_text": "Thanks!",
+  "tone": "positive",
   "number_of_persons": 1,
-  "person_talking": "unknown", // You don't know this speaker yet.
-  "adjacency_pairs": false
+  "person_talking": "unknown", 
+  "adjacency_pairs": true,  
+  "stop_talking": false,
+  "conversation_history": [
+    "Hey Shimmy, what time is it?", 
+    "It is 3:45 PM.", 
+    "Thanks!"
+  ]
+}
+
+Conversation History:
+"Hey Shimmy, do you like dogs?" 
+"I am a robot, so I don't have feelings about dogs." (Shimmy's voice)
+"Oh, okay."
+{
+  "chat_text": "What about cats?",
+  "tone": "curious",
+  "number_of_persons": 1,
+  "person_talking": "unknown", 
+  "adjacency_pairs": true,  // Related to the previous turns about pets
+  "stop_talking": false,
+  "conversation_history": [
+    "Hey Shimmy, do you like dogs?",
+    "I am a robot, so I don't have feelings about dogs.",
+    "Oh, okay.", 
+    "What about cats?"
+  ]
+}
+
+Conversation History:
+"Hey Shimmy, have you met Sarah?"
+"No, I haven't." (Shimmy's voice)
+Current Utterance: "Hi Shimmy, I'm Sarah."
+JSON Output:
+{
+  "chat_text": "Hi Shimmy, I'm Sarah.",
+  "tone": "friendly",
+  "number_of_persons": 1,
+  "person_talking": "Sarah", // Recognized from introduction
+  "adjacency_pairs": false, 
+  "stop_talking": false,
+  "conversation_history": [
+    "Hey Shimmy, have you met Sarah?",
+    "No, I haven't.", 
+    "Hi Shimmy, I'm Sarah."
+  ]
 }
 """
         
         self.audio_model = GenerativeModel("gemini-flash-experimental",system_instruction=[system_prompt])
         self.audio_chat = self.audio_model.start_chat()
+        
         self.safety_settings = {
             generative_models.HarmCategory.HARM_CATEGORY_HATE_SPEECH: generative_models.HarmBlockThreshold.BLOCK_ONLY_HIGH,
             generative_models.HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT: generative_models.HarmBlockThreshold.BLOCK_ONLY_HIGH,
@@ -95,6 +176,7 @@ JSON Output:
             "temperature": 0,
             "top_p": 0.95,
         }
+        
 
     def convert_linear16_to_flac(self, linear16_data, sample_rate=16000):
         """Converts LINEAR16 audio data to FLAC format.
@@ -125,6 +207,13 @@ JSON Output:
         if self.ready_flag is not None:
             self.ready_flag.set()
 
+        model = Model.from_pretrained("pyannote/embedding", 
+                              use_auth_token=os.environ['HUGGINGFACE_TOKEN'])
+        inference = Inference(model, window="whole")
+        device = torch.device("cuda")
+        inference.to(device)
+        # Initialize pyannote.audio pipeline 
+        
         while True:
             try:
                 speech_segment = self.input_queue.get()
@@ -135,6 +224,18 @@ JSON Output:
                 #audio_samples = np.frombuffer(raw_audio_bytes_array, dtype=np.int16)
                 #buffer = io.BytesIO()
                 #wav.write(buffer, 16000, audio_samples)
+                audio_data = np.concatenate([chunk.audio_numpy_normalized[self.use_channel] for chunk in speech_segment.chunks])
+                sample_rate = 16000
+                try:
+                    embeddings = inference(
+                        {"waveform": torch.from_numpy(audio_data).unsqueeze(0).to(device), 
+                        "sample_rate": sample_rate}
+                    )
+                except Exception as e:
+                    print(f"Error extracting embeddings: {e}")
+                    embeddings = None 
+
+                
                 t0 = time.perf_counter_ns()
                 
                 
@@ -145,8 +246,10 @@ JSON Output:
                 dialog = json.loads(response.text.replace("```json","").replace("```",""))
                 print(dialog)
                 if len(dialog["chat_text"]) > 0:
+                    
                     t1 = time.perf_counter_ns()
                     dialog["time"] = (t1 - t0) / 1e9
+                    dialog["embeddings"] = embeddings
                     t1 = time.perf_counter_ns()
                     self.output_queue.put(dialog)
             except:
@@ -156,13 +259,36 @@ JSON Output:
 
 
 class GEMINIPublisher(Node):
-    def __init__(self):
+    def __init__(self,namespace='/shimmy_bot'):
         super().__init__('gemini_asr_publisher')
-        self.publisher_ = self.create_publisher(Chat, 'asr', 10)
+        self.publisher_ = self.create_publisher(Chat, f'{namespace}/asr', 10)
         dev = usb.core.find(idVendor=0x2886, idProduct=0x0018)
         self.r_mic = Tuning(dev)
         t = threading.Thread(target=self.lworker)
         t.start()
+        self.cli = self.create_client(GetEmb, f"{namespace}/get_emb")
+        self.emb_publisher = self.create_publisher(Emb, f'{namespace}/embeddings', 10)
+        
+        while not self.cli.wait_for_service(timeout_sec=1.0):
+            self.get_logger().info(f'faiss service {namespace} not available, waiting again...')
+        self.emb_publisher
+        
+    def send_request(self,embedding,k=1):
+        emb_req = GetEmb.Request()
+        emb_req.k = k
+        emb_req.embedding = embedding
+        future = self.cli.call_async(emb_req)
+        rclpy.spin_until_future_complete(self, future,timeout_sec=30)
+        return future.result()
+    
+    def publish_embedding(self,name,embedding,map={}):
+        self.get_logger().info('sssss Publishing: "%s"' % name)
+        msg = Emb()
+        map["name"] = name
+        msg.metadata = json.dumps(map)
+        msg.embedding = embedding
+        self.emb_publisher.publish(msg)
+        self.get_logger().info('Publishing: "%s"' % msg.metadata)
 
 
     def lworker(self):
@@ -195,6 +321,20 @@ class GEMINIPublisher(Node):
                 direction = adjust_angle(self.r_mic.direction)
                 self.get_logger().info("Direction %d" % (direction))
                 item = output_queue.get()
+                embeddings = item["embeddings"]
+                if embeddings is not None and item['person_talking'] != 'unknown':
+                        self.publish_embedding(item['person_talking'],embeddings.tolist())
+                if embeddings is not None and item['person_talking'] == 'unknown':
+                    try:
+                        result = self.send_request(embeddings.tolist())
+                        emb = result.embeddings[0]
+                        metadata = json.loads(emb.metadata)
+                        person  = metadata["name"]
+                        distance = emb.distance
+                        self.get_logger().info("Ignoring %s match is %d" %(person,distance))
+                    except Exception as e:
+                        print(f"Error extracting embeddings: {e}")
+                        embeddings = None 
                 msg = Chat()
                 msg.chat_text = item["chat_text"]
                 msg.tone = item["tone"]
@@ -202,6 +342,7 @@ class GEMINIPublisher(Node):
                 msg.adjacency_pairs = bool(item["adjacency_pairs"])
                 msg.direction = direction
                 msg.person = item["person_talking"]
+                msg.stop_talking = item["stop_talking"]
                 self.publisher_.publish(msg)
                 self.get_logger().info(f'Publishing: {msg.chat_text} adj:{msg.adjacency_pairs} tone:{msg.tone} num_persons:{msg.num_of_persons}')
         except:
