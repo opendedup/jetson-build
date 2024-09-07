@@ -43,6 +43,9 @@ from datetime import datetime
 
 import logging
 from logging.handlers import RotatingFileHandler
+from std_msgs.msg import String
+from vertexai.preview.prompts import Prompt
+
 
 class GoogleASRSubscriber(Node):
 
@@ -52,6 +55,11 @@ class GoogleASRSubscriber(Node):
             Chat,
             f'{namespace}/asr',
             self.listener_callback,
+            10)
+        self.subscription = self.create_subscription(
+            String,
+            f'{namespace}/system_message',
+            self.system_message_callback,
             10)
         self.declare_parameter('sound_device',"miniDSP")
         self.declare_parameter('train_voice',False)
@@ -98,11 +106,13 @@ Some Facts about you can use in context when answering questions:
         self.transcript_file = self.get_parameter('transcript_file').value
         self.voice = texttospeech.VoiceSelectionParams(language_code="en-US",name=self.voice_name)
         self.audio_config = texttospeech.AudioConfig(
-            audio_encoding=texttospeech.AudioEncoding.MP3,
+            audio_encoding=texttospeech.AudioEncoding.LINEAR16,
         )
+        
         vertexai.init(project="lemmingsinthewind", location="us-central1")
+        self.system_prompt = self.get_parameter("prompt").value
         model = GenerativeModel("gemini-flash-experimental",tools=[Tool(
-        function_declarations=robot_agents)],system_instruction=[self.get_parameter("prompt").value])
+        function_declarations=robot_agents)],system_instruction=[self.system_prompt])
         self.robot_names = self.get_parameter("robot_names").value
         
         self.chat = model.start_chat()
@@ -149,6 +159,7 @@ Some Facts about you can use in context when answering questions:
         self.stop_text_generation_event = threading.Event()  # Event to stop text generation
         
         
+        
  
     def append_to_file(self,text,person):
         if person.startswith(self.voice_name):
@@ -192,7 +203,7 @@ Some Facts about you can use in context when answering questions:
             response = self.tts_service.synthesize_speech(
                 input=input_text, voice=self.voice, audio_config=self.audio_config
             )
-            npa = convert_mp3(response.audio_content,volume_adjust=self.volume_adjust)
+            npa = convert_wav(response.audio_content,volume_adjust=self.volume_adjust)
             return npa
         except:
             self.get_logger().error("an error occured")
@@ -237,18 +248,6 @@ Some Facts about you can use in context when answering questions:
     def handle_get_time(self, part, person):
         time_zone = part.function_call.args["time_zone"]
         return self.robot_runner.get_current_time(time_zone)
-    
-    def handle_remember_voice(self, part, person):
-        person_to_remember = part.function_call.args["name"]
-        if person_to_remember not in self.robot_names:
-            return self.robot_runner.add_voice(person_to_remember, emb)
-        else:
-            return Part.from_function_response(
-                name="remember_voice",
-                response={
-                    "content": {"user_name": person_to_remember},
-                }
-            )
 
     def handle_change_voice_volume(self, part, person):
         volume_percent = .10
@@ -307,7 +306,6 @@ Some Facts about you can use in context when answering questions:
             'move_around': self.handle_move_shimmy,
             'change_led_pattern': self.handle_change_led_pattern,
             'get_time': self.handle_get_time,
-            'remember_voice': self.handle_remember_voice,
             'change_voice_volume': self.handle_change_voice_volume,
             'use_robot_eyes': self.handle_use_robot_eyes,
             'stop_moving': self.handle_stop_moving,
@@ -415,7 +413,22 @@ Some Facts about you can use in context when answering questions:
                             except Exception as error:
                                 self.get_logger().error(error.message)
                         
-    
+    def system_message_callback(self, msg):
+        prompt = Prompt(
+            prompt_data=[msg.data],
+            model_name="gemini-flash-experimental",
+            generation_config=self.config,
+            safety_settings=self.safety_settings,
+            system_instruction=[self.system_prompt + "\n" + "Your job is to reword incoming statements and put it in your own words as if you were saying them.\n"]
+        )
+        responses = prompt.generate_content(
+            contents=prompt.assemble_contents(),
+            stream=True,
+        )
+        for response in responses:
+            self.get_logger().info(response.text)
+            self.text_q.put(response.text)
+        
 
     def listener_callback(self, msg):
         person = msg.person
@@ -437,9 +450,9 @@ Some Facts about you can use in context when answering questions:
             
 
 
-def convert_mp3(data, normalized=False,volume_adjust=0):
-    """MP3 to numpy array"""
-    sound = AudioSegment.from_file(io.BytesIO(data), format="mp3")
+def convert_wav(data, normalized=False,volume_adjust=0):
+    """Wav to numpy array"""
+    sound = AudioSegment.from_file(io.BytesIO(data), format="wav")
     sound = sound.set_frame_rate(44100)
     if volume_adjust != 0:
         sound = sound + volume_adjust

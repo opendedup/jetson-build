@@ -62,7 +62,6 @@ class EmbeddingService(Node):
         
 
     def addemb_callback(self, msg: Emb):
-        self.get_logger().info('ZZWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWW')
         kb = json.loads(msg.metadata)
         mm = np.array([msg.embedding]).astype(np.float32).tolist()
         kb["value"] = mm

@@ -11,19 +11,12 @@ from vertexai.preview.generative_models import (
     FunctionDeclaration,
 )
 
-
-from vertexai.vision_models import (
-    Image as VXImage,
-    MultiModalEmbeddingModel
-)
-import base64
-import subprocess
 import pytz 
 import traceback
 import logging
 import sys
 from .image_client import ImageClientAsync
-from .faiss_client import FaissClientAsync
+from .shimmy_system_notifier_client import ShimmySystemNotifierAsync
 from .microcontroller_client import MicroControllerClientAsync
 from .shimmy_move_client import ShimmyMoveClientAsync
 
@@ -33,6 +26,7 @@ from cv_bridge import CvBridge
 import numpy as np
 import uuid
 logging.basicConfig(level=logging.INFO, stream=sys.stderr)
+
 
 from vertexai.generative_models import (
     GenerativeModel,
@@ -49,7 +43,7 @@ class AgentRunner:
         #self.voice_emb_client = FaissClientAsync()
         self.microcontroller_client = MicroControllerClientAsync()
         self.shimmy_move_client = ShimmyMoveClientAsync()
-        #self.image_emb_client = FaissClientAsync("images")
+        self.state_notifier = ShimmySystemNotifierAsync()
         vertexai.init(project="lemmingsinthewind", location="us-central1")
         tools = [
             Tool.from_google_search_retrieval(
@@ -150,13 +144,15 @@ You will be provided with a user's query as input. Your task is to provide a det
     
     def move_shimmy(self,command):
         try:
+            self.state_notifier.publish_status('Give me a few seconds while I figure out how to chart my path.')
             self.shimmy_move_client.publish_pose(command)
             part = Part.from_function_response(
                 name="move_shimmy",
                 response={
-                    "content": {"status":"starting to move"},
+                    "content": {"status":"starting to move."},
                 },
             )
+            
         except:
             logging.error(traceback.format_exc()) 
             part = Part.from_function_response(
@@ -230,6 +226,7 @@ You will be provided with a user's query as input. Your task is to provide a det
 
     def get_image(self,text_req):
         try:
+            self.state_notifier.publish_status('Give me a few seconds while I use my eyes.')
             rtxt = self.image_client.get_image(text_req)
             part = Part.from_function_response(
                 name="use_robot_eyes",
@@ -249,6 +246,7 @@ You will be provided with a user's query as input. Your task is to provide a det
         return part
     def find_object(self,text_req,additional_context=""):
         try:
+            self.state_notifier.publish_status(f'Give me a moment while I use my eyes to find {text_req} .')
             rtxt,_,_ = self.image_client.get_bounding_box(text_req,additional_context)
             direction = "left"
             if rtxt[0] > 0:
@@ -273,12 +271,14 @@ You will be provided with a user's query as input. Your task is to provide a det
     
     def move_to_object(self,text_req,additional_context="",move_command=""):
         try:
+            self.state_notifier.publish_status(f'Give me a moment while I use my eyes to find {text_req} .')
             rtxt,obj_coords,_ = self.image_client.get_bounding_box(text_req,additional_context)
             direction = "left"
             if rtxt[0] > 0:
                 direction = "right"
             if len(move_command) == 0:
                 move_command = f"Move directly infront of the {text_req} leaving a buffer so you don't run into it."
+            self.state_notifier.publish_status(f'Found the {text_req} {rtxt[2]} meters forward and to the {direction} {rtxt[0]} meters. Charting my path')
             self.shimmy_move_client.publish_pose(f"""There is {text_req} found  {rtxt[2]} meters forward and to the {direction} {rtxt[0]} meters.
 In the image. In the image provided the {text_req} can be found within the following bounding box expressed as [y_min, x_min, y_max, x_max]:
 {obj_coords}
@@ -326,7 +326,7 @@ In the image. In the image provided the {text_req} can be found within the follo
     
     def use_web(self,text_req):
         try:
-            
+            self.state_notifier.publish_status(f'Give me a moment while I look that up for you .')
             response = self.wbmodel.generate_content([text_req],
                                     generation_config=self.config,stream=False, safety_settings=self.safety_settings)
             part = Part.from_function_response(

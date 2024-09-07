@@ -74,7 +74,7 @@ RUN git clone https://github.com/pytorch/audio
 
 WORKDIR /opt/audio
 ARG USE_CUDA=1
-RUN pip install --no-cache-dir -v -e . --no-use-pep517
+RUN USE_CUDA=1 pip install --no-cache-dir -v -e . --no-use-pep517
 
 # # make sure it loads
 RUN pip show nemo_toolkit && python3 -c 'import nemo; print(nemo.__version__)'
@@ -82,10 +82,11 @@ RUN pip show nemo_toolkit && python3 -c 'import nemo; print(nemo.__version__)'
 # # set the nemo model cache directory to mounted /data volume
 ENV NEMO_CACHE_DIR=/data/models/nemo
 WORKDIR /opt/
-RUN git clone https://github.com/pyannote/pyannote-audio.git -b 3.3.1 && \
-	cd pyannote-audio && \
-	pip --no-cache-dir install -e .
+RUN git clone https://github.com/pyannote/pyannote-audio.git -b 3.3.1
+RUN sed -i '31s/.*/    mine = VersionInfo.parse(mine[:5])/' /opt/pyannote-audio/pyannote/audio/utils/version.py
+WORKDIR /opt/pyannote
+RUN pip --no-cache-dir install -e .
 
-
+WORKDIR /root/ros2_ws
 ENTRYPOINT ["/ros_entrypoint.sh"]
 CMD ["/bin/bash"]
