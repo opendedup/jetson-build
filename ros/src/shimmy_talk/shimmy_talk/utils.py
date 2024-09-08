@@ -9,6 +9,10 @@ import multiprocessing as mp
 import numpy as np
 import time
 
+from vertexai.generative_models import (
+    Content
+)
+
 
 
 def deEmojify(text):
@@ -166,3 +170,18 @@ def extract_text_from_dict(data, sentence_separator=" "):
 
     
 
+class HistoryFIFOCache:
+    """A simple FIFO (First-In, First-Out) cache implementation for Content objects."""
+    def __init__(self, capacity):
+        self.capacity = capacity
+        self.cache = []
+
+    def push(self, item: Content):
+        """Add a Content item to the cache. Removes the oldest item if capacity is reached."""
+        if len(self.cache) == self.capacity:
+            self.cache.pop(0)  # Remove the oldest item
+        self.cache.append(item)
+
+    def get_history(self) -> List[Content]:
+        """Returns a copy of the current cache contents as a list of Content."""
+        return self.cache.copy()

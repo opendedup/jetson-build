@@ -36,6 +36,7 @@ import os
 
 from embeddings.srv import GetEmb
 from embeddings.msg import Emb
+from .utils import HistoryFIFOCache
 
 
 
@@ -50,7 +51,7 @@ class GEMINIASR(Process):
         self.output_queue = output_queue
         self.model_name = "superb/wav2vec2-large-superb-sid"
         vertexai.init(project="lemmingsinthewind", location="us-central1")
-        self.chat_history = deque(maxlen=history_limit)
+        self.chat_history = HistoryFIFOCache(history_limit)
         system_prompt = """
 You are Shimmy, a robot with advanced audio processing capabilities. Your primary task is to:
 
@@ -293,30 +294,27 @@ Shimmy: As a robot, I don't have color preferences."
                 
                 ipart = Part.from_data(data=flac_audio_data.getvalue(),mime_type="audio/flac")
                 
-                history_content = []
-                for turn in self.chat_history:
-                    history_content.append(turn)  # No need to create Content again
-                # response = self.audio_chat.send_message(["here is the audio. only return the json.",ipart],
-                #                 generation_config=self.config,stream=False, safety_settings=self.safety_settings)
+                history_content = self.chat_history.get_history()
+                
                 audio_chat = self.audio_model.start_chat(history=history_content)
                 response = audio_chat.send_message(
                                 ["here is the audio. only return the json.",ipart], 
                                 generation_config=self.config,
                                 stream=False, 
                                 safety_settings=self.safety_settings
-                            )  
-                self.chat_history.append(Content(role="user", parts=[ipart]))
+                            )
+                
+                self.chat_history.push(Content(role="user", parts=[ipart]))
                 dialog = json.loads(response.text.replace("```json","").replace("```",""))
                 print(dialog)
                 if len(dialog["chat_text"]) > 0:
-                    
                     t1 = time.perf_counter_ns()
                     dialog["time"] = (t1 - t0) / 1e9
                     dialog["embeddings"] = embeddings
                     t1 = time.perf_counter_ns()
                     self.output_queue.put(dialog)
                     model_text_part = Part.from_text(dialog["chat_text"])
-                    self.chat_history.append(Content(role="model", parts=[model_text_part])) 
+                    self.chat_history.push(Content(role="model", parts=[model_text_part])) 
             except:
                 print('Failed turning sound into text')
                 print('%s' % traceback.format_exc())
