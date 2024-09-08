@@ -190,10 +190,6 @@ Some Facts about you can use in context when answering questions:
         return False
 
 
-            
-            
-        
-    
     def get_speech(self,text):
         try:
             self.get_logger().info("processing_text %s" % (text))

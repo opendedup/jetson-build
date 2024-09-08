@@ -27,7 +27,7 @@ from pydub import AudioSegment
 
 import json
 import vertexai
-from vertexai.generative_models import GenerativeModel, Part
+from vertexai.generative_models import GenerativeModel, Part, Content
 import vertexai.generative_models as generative_models
 from pyannote.audio import Model
 from pyannote.audio import Inference
@@ -42,7 +42,7 @@ from embeddings.msg import Emb
 
 class GEMINIASR(Process):
 
-    def __init__(self, input_queue,output_queue, use_channel: int = 0, ready_flag = None):
+    def __init__(self, input_queue,output_queue, use_channel: int = 0, ready_flag = None, history_limit=7):
         super().__init__()
         self.input_queue = input_queue
         self.use_channel = use_channel
@@ -50,6 +50,7 @@ class GEMINIASR(Process):
         self.output_queue = output_queue
         self.model_name = "superb/wav2vec2-large-superb-sid"
         vertexai.init(project="lemmingsinthewind", location="us-central1")
+        self.chat_history = deque(maxlen=history_limit)
         system_prompt = """
 You are Shimmy, a robot with advanced audio processing capabilities. Your primary task is to:
 
@@ -216,7 +217,7 @@ Shimmy: As a robot, I don't have color preferences."
 """
         
         self.audio_model = GenerativeModel("gemini-flash-experimental",system_instruction=[system_prompt])
-        self.audio_chat = self.audio_model.start_chat()
+        #self.audio_chat = self.audio_model.start_chat()
         
         self.safety_settings = {
             generative_models.HarmCategory.HARM_CATEGORY_HATE_SPEECH: generative_models.HarmBlockThreshold.BLOCK_ONLY_HIGH,
@@ -274,9 +275,6 @@ Shimmy: As a robot, I don't have color preferences."
                 for chunk in speech_segment.chunks:
                     raw_audio_bytes_array.extend(chunk.audio_raw)
                 flac_audio_data = self.convert_linear16_to_flac(raw_audio_bytes_array)
-                #audio_samples = np.frombuffer(raw_audio_bytes_array, dtype=np.int16)
-                #buffer = io.BytesIO()
-                #wav.write(buffer, 16000, audio_samples)
                 audio_data = np.concatenate([chunk.audio_numpy_normalized[self.use_channel] for chunk in speech_segment.chunks])
                 sample_rate = 16000
                 try:
@@ -294,8 +292,20 @@ Shimmy: As a robot, I don't have color preferences."
                 
                 
                 ipart = Part.from_data(data=flac_audio_data.getvalue(),mime_type="audio/flac")
-                response = self.audio_chat.send_message(["here is the audio. only return the json.",ipart],
-                                generation_config=self.config,stream=False, safety_settings=self.safety_settings)
+                
+                history_content = []
+                for turn in self.chat_history:
+                    history_content.append(turn)  # No need to create Content again
+                # response = self.audio_chat.send_message(["here is the audio. only return the json.",ipart],
+                #                 generation_config=self.config,stream=False, safety_settings=self.safety_settings)
+                audio_chat = self.audio_model.start_chat(history=history_content)
+                response = audio_chat.send_message(
+                                ["here is the audio. only return the json.",ipart], 
+                                generation_config=self.config,
+                                stream=False, 
+                                safety_settings=self.safety_settings
+                            )  
+                self.chat_history.append(Content(role="user", parts=[ipart]))
                 dialog = json.loads(response.text.replace("```json","").replace("```",""))
                 print(dialog)
                 if len(dialog["chat_text"]) > 0:
@@ -305,6 +315,8 @@ Shimmy: As a robot, I don't have color preferences."
                     dialog["embeddings"] = embeddings
                     t1 = time.perf_counter_ns()
                     self.output_queue.put(dialog)
+                    model_text_part = Part.from_text(dialog["chat_text"])
+                    self.chat_history.append(Content(role="model", parts=[model_text_part])) 
             except:
                 print('Failed turning sound into text')
                 print('%s' % traceback.format_exc())
