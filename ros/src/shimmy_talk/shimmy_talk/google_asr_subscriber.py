@@ -394,8 +394,8 @@ Some Facts about you can use in context when answering questions:
                                 try:
                                     self.audio_q.put(executor.submit(self.get_speech, talk_text))
                                     self.get_logger().info(f"saying {talk_text}")
-                                except Exception as error:
-                                    self.get_logger().error(error.message)
+                                except Exception:
+                                    self.get_logger().error('%s' % traceback.format_exc())
                 except queue.Empty:
                     if len(resp_text) > 0:
                         doc = nlp(resp_text)
@@ -406,8 +406,9 @@ Some Facts about you can use in context when answering questions:
                                 self.audio_q.put(executor.submit(self.get_speech, talk_text))
                                 self.get_logger().info(f"end saying {talk_text}")
                                 resp_text = ""
-                            except Exception as error:
-                                self.get_logger().error(error.message)
+                            
+                            except Exception:
+                                self.get_logger().error('%s' % traceback.format_exc())
                         
     def system_message_callback(self, msg):
         prompt = Prompt(

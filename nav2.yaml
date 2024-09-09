@@ -1,58 +1,9 @@
-amcl:
-  ros__parameters:
-    use_sim_time: false
-    alpha1: 0.2
-    alpha2: 0.2
-    alpha3: 0.2
-    alpha4: 0.2
-    alpha5: 0.2
-    base_frame_id: "zed_imu_link"
-    beam_skip_distance: 0.5
-    beam_skip_error_threshold: 0.9
-    beam_skip_threshold: 0.3
-    do_beamskip: false
-    global_frame_id: "map"
-    lambda_short: 0.1
-    laser_likelihood_max_dist: 2.0
-    laser_max_range: 100.0
-    laser_min_range: -1.0
-    laser_model_type: "likelihood_field"
-    max_beams: 60
-    max_particles: 2000
-    min_particles: 500
-    odom_frame_id: "odom"
-    pf_err: 0.05
-    pf_z: 0.99
-    recovery_alpha_fast: 0.0
-    recovery_alpha_slow: 0.0
-    resample_interval: 1
-    robot_model_type: "differential"
-    save_pose_rate: 0.5
-    sigma_hit: 0.2
-    tf_broadcast: true
-    transform_tolerance: 1.0
-    update_min_a: 0.2
-    update_min_d: 0.25
-    z_hit: 0.5
-    z_max: 0.05
-    z_rand: 0.5
-    z_short: 0.05
-    #scan_topic: scan
-
-amcl_map_client:
-  ros__parameters:
-    use_sim_time: false
-
-amcl_rclcpp_node:
-  ros__parameters:
-    use_sim_time: false
-
 bt_navigator:
   ros__parameters:
     use_sim_time: false
-    global_frame: odom
-    robot_base_frame: base_link
-    odom_topic: /odom
+    global_frame: map
+    robot_base_frame: zed_camera_link
+    odom_topic: /zed/zed_node/odom
     bt_loop_duration: 10
     default_server_timeout: 20
     enable_groot_monitoring: True
@@ -110,7 +61,7 @@ controller_server:
     progress_checker_plugin: "progress_checker"
     goal_checker_plugins: ["general_goal_checker"] # "precise_goal_checker"
     controller_plugins: ["FollowPath"]
-    odom_topic: /odom
+    odom_topic: /zed/zed_node/odom
 
     # Progress checker parameters
     progress_checker:
@@ -187,22 +138,23 @@ controller_server_rclcpp_node:
 local_costmap:
   local_costmap:
     ros__parameters:
-      update_frequency: 2.0
-      publish_frequency: 1.0
-      global_frame: odom
-      robot_base_frame: base_link
+      update_frequency: 5.0  # Increase for more responsive obstacle avoidance
+      publish_frequency: 2.0 #  Increase for smoother visualization
+      global_frame: odom  # Use ZED's frame if no AMCL
+      robot_base_frame: zed_camera_link
       use_sim_time: false
       rolling_window: true
-      width: 6
-      height: 6
-      resolution: 0.05
-      footprint: "[ [0.21, 0.195], [0.21, -0.195], [-0.21, -0.195], [-0.21, 0.195] ]"
-      plugins: ["inflation_layer"]
+      width: 3 #  Adjust to cover a sufficient area around the robot
+      height: 3  # Adjust to cover a sufficient area around the robot
+      resolution: 0.05 
+      footprint: "[ [0.20, 0.16], [0.20, -0.16], [-0.20, -0.16], [-0.20, 0.16] ]"
+      plugins: ["inflation_layer", "voxel_layer"]  # Include the voxel_layer 
       inflation_layer:
         plugin: "nav2_costmap_2d::InflationLayer"
-        cost_scaling_factor: 2.0
-        inflation_radius: 0.25
-      voxel_layer:
+        cost_scaling_factor: 3.0  # Increase for stronger obstacle repulsion
+        inflation_radius: 0.55  #  Inflate obstacles to match robot's safety margin
+
+      voxel_layer: # Essential for incorporating ZED's point cloud
         plugin: "nav2_costmap_2d::VoxelLayer"
         enabled: True
         publish_voxel_map: True
@@ -213,15 +165,15 @@ local_costmap:
         mark_threshold: 0
         observation_sources: point_cloud
         point_cloud:
-          topic: /zed/zed_node/mapping/fused_cloud  # Adjust topic name if needed
+          topic: /zed/zed_node/mapping/fused_cloud 
           max_obstacle_height: 2.0
           clearing: True
           marking: True
           data_type: "PointCloud2"
-          raytrace_max_range: 3.0
-          raytrace_min_range: 0.0
-          obstacle_max_range: 2.5
-          obstacle_min_range: 0.0
+          raytrace_max_range: 3.0  # Reduce to match ZED's effective range
+          raytrace_min_range: 0.1 # Set a small minimum to avoid self-collisions 
+          obstacle_max_range: 2.5 
+          obstacle_min_range: 0.1 # Set a small minimum to avoid self-collisions
       static_layer:
         map_subscribe_transient_local: True
       always_send_full_costmap: True
@@ -235,62 +187,81 @@ local_costmap:
 global_costmap:
   global_costmap:
     ros__parameters:
-      update_frequency: 0.25
-      publish_frequency: 0.5
-      global_frame: odom
-      robot_base_frame: base_link
+      update_frequency: 1.0 # Increase for more responsiveness 
+      publish_frequency: 1.0  # Increase for smoother visualization
+      global_frame: map # Consistent with local_costmap
+      robot_base_frame: zed_camera_link # Consistent with local_costmap
       use_sim_time: false
-      robot_radius: 0.3
+      robot_radius: 0.25  # Reduce to match Shimmy's actual size 
       resolution: 0.05
-      track_unknown_space: true
-      plugins: ["static_layer", "inflation_layer"]
+      track_unknown_space: true 
+      plugins: ["static_layer", "inflation_layer", "voxel_layer"] # Add voxel_layer
       static_layer:
         plugin: "nav2_costmap_2d::StaticLayer"
         map_subscribe_transient_local: True
       inflation_layer:
         plugin: "nav2_costmap_2d::InflationLayer"
-        cost_scaling_factor: 2.0
-        inflation_radius: 0.25
+        cost_scaling_factor: 3.0 # Increase for stronger obstacle repulsion
+        inflation_radius: 0.55  #  Consistent with local_costmap
+
+      voxel_layer:  # Incorporate ZED point cloud into global costmap
+        plugin: "nav2_costmap_2d::VoxelLayer"
+        enabled: True
+        publish_voxel_map: True
+        origin_z: 0.0
+        z_resolution: 0.05
+        z_voxels: 16
+        max_obstacle_height: 2.0
+        mark_threshold: 0
+        observation_sources: point_cloud
+        point_cloud:
+          topic: /zed/zed_node/mapping/fused_cloud
+          max_obstacle_height: 2.0
+          clearing: True 
+          marking: True
+          data_type: "PointCloud2"
+          raytrace_max_range: 3.0 # Consistent with local_costmap
+          raytrace_min_range: 0.1 # Consistent with local_costmap
+          obstacle_max_range: 2.5
+          obstacle_min_range: 0.1 # Consistent with local_costmap 
       always_send_full_costmap: True
-  global_costmap_client:
-    ros__parameters:
-      use_sim_time: false
-  global_costmap_rclcpp_node:
-    ros__parameters:
-      use_sim_time: false
 
 planner_server:
   ros__parameters:
-    expected_planner_frequency: 20.0
+    expected_planner_frequency: 10.0  #  Reduce if not needed for responsiveness
     use_sim_time: false
     planner_plugins: ["GridBased"]
     GridBased:
       plugin: "nav2_navfn_planner/NavfnPlanner"
-      tolerance: 0.5
-      use_astar: false
-      allow_unknown: true
+      tolerance: 0.25  # Reduce for more precise path following
+      use_astar: true   # Consider using A* for potentially better paths
+      allow_unknown: true 
 
 planner_server_rclcpp_node:
   ros__parameters:
     use_sim_time: false
-    transform_tolerance: 15.0
+    transform_tolerance: 2.0  # Reduce for tighter TF synchronization
 
-recoveries_server:
+behavior_server:
   ros__parameters:
     costmap_topic: local_costmap/costmap_raw
     footprint_topic: local_costmap/published_footprint
     cycle_frequency: 10.0
-    recovery_plugins: ["spin", "backup", "wait"]
+    behavior_plugins: ["spin", "backup", "drive_on_heading", "assisted_teleop", "wait"]
     spin:
-      plugin: "nav2_recoveries/Spin"
+      plugin: "nav2_behaviors/Spin"
     backup:
-      plugin: "nav2_recoveries/BackUp"
+      plugin: "nav2_behaviors/BackUp"
+    drive_on_heading:
+      plugin: "nav2_behaviors/DriveOnHeading"
     wait:
-      plugin: "nav2_recoveries/Wait"
+      plugin: "nav2_behaviors/Wait"
+    assisted_teleop:
+      plugin: "nav2_behaviors/AssistedTeleop"
     global_frame: odom
-    robot_base_frame: base_link
-    transform_timeout: 0.1
-    use_sim_time: false
+    robot_base_frame: zed_camera_link
+    transform_tolerance: 0.1
+    use_sim_time: true
     simulate_ahead_time: 2.0
     max_rotational_vel: 1.0
     min_rotational_vel: 0.4
@@ -299,13 +270,3 @@ recoveries_server:
 robot_state_publisher:
   ros__parameters:
     use_sim_time: false
-
-waypoint_follower:
-  ros__parameters:
-    loop_rate: 20
-    stop_on_failure: false
-    waypoint_task_executor_plugin: "wait_at_waypoint"
-    wait_at_waypoint:
-      plugin: "nav2_waypoint_follower::WaitAtWaypoint"
-      enabled: True
-      waypoint_pause_duration: 200
