@@ -54,3 +54,5 @@ log/
 CATKIN_IGNORE
 ros/log*
 __pycache__
+myfile_crop.jpg
+myfile.jpg

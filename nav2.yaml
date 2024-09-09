@@ -85,18 +85,18 @@ controller_server:
       debug_trajectory_details: True
       min_vel_x: 0.0
       min_vel_y: 0.0
-      max_vel_x: 0.26
-      max_vel_y: 0.0
+      max_vel_x: 0.4
+      max_vel_y: 0.4
       max_vel_theta: 1.0
       min_speed_xy: 0.0
-      max_speed_xy: 0.26
+      max_speed_xy: 0.4
       min_speed_theta: 0.0
       # Add high threshold velocity for turtlebot 3 issue.
       # https://github.com/ROBOTIS-GIT/turtlebot3_simulations/issues/75
-      acc_lim_x: 2.5
+      acc_lim_x: 3.0
       acc_lim_y: 0.0
       acc_lim_theta: 3.2
-      decel_lim_x: -2.5
+      decel_lim_x: -3.0
       decel_lim_y: 0.0
       decel_lim_theta: -3.2
       vx_samples: 20
@@ -152,7 +152,7 @@ local_costmap:
       inflation_layer:
         plugin: "nav2_costmap_2d::InflationLayer"
         cost_scaling_factor: 3.0  # Increase for stronger obstacle repulsion
-        inflation_radius: 0.55  #  Inflate obstacles to match robot's safety margin
+        inflation_radius: 0.75  #  Inflate obstacles to match robot's safety margin
 
       voxel_layer: # Essential for incorporating ZED's point cloud
         plugin: "nav2_costmap_2d::VoxelLayer"
@@ -202,7 +202,7 @@ global_costmap:
       inflation_layer:
         plugin: "nav2_costmap_2d::InflationLayer"
         cost_scaling_factor: 3.0 # Increase for stronger obstacle repulsion
-        inflation_radius: 0.55  #  Consistent with local_costmap
+        inflation_radius: 0.65  #  Consistent with local_costmap
 
       voxel_layer:  # Incorporate ZED point cloud into global costmap
         plugin: "nav2_costmap_2d::VoxelLayer"

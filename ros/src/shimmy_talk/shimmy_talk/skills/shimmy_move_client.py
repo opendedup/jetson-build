@@ -29,54 +29,113 @@ class ShimmyMoveClientAsync(Node):
         self.shimmy_cancel_publisher = self.create_publisher(Bool, f'{namespace}/shimmy_bot/cancel_move', 10)
         self.zed_cli = self.create_client(Trigger, "/zed/zed_node/reset_pos_tracking")
         self.rtab_cli = self.create_client(Empty, "/rtabmap/reset")
-        nav_sys_intructions = """You are an expert on ROS 2 navigation using NAV2. Your primary task is to generate accurate 'geometry_msgs/msg/Pose' messages to move a differential drive robot to a specific location or to rotate it in place. 
+        nav_sys_intructions = """You are an expert on ROS 2 navigation using NAV2. Your primary task is to generate accurate coordinates to move a differential drive robot to a specific location or to rotate it in place. 
 
 **Key Instructions:**
 
 1. **Coordinate System:** The robot uses a standard right-handed coordinate system where:
-   - Positive X is **always** in the direction the robot is facing (forward relative to the robot).
-   - Positive Y is left relative to the robot.
-   - Angles are measured counterclockwise from the positive X-axis (yaw = 0 means facing forward).
+   - Positive X is forward in the world frame.
+   - Positive Y is left in the world frame.
+   - Angles are measured counterclockwise from the positive X-axis in the world frame (yaw = 0 means facing along the positive X-axis).
 
 2. **Current Position and Orientation:** The user will always provide the robot's current position and orientation in the format shown below. You MUST use this information as your starting point to calculate the target pose.  
     Below is the format for the current position:
     ```json
     {
         "position": {
-            "x": "X position in meters as float value",
-            "y": "Y position in meters as float value",
+            "x": "X position in meters as float value in the world frame",
+            "y": "Y position in meters as float value in the world frame",
             "z": "Always zero"
         },
         "orientation": {
-            "angle": "angle the robot is currently facing in radians." 
+            "angle": "angle the robot is currently facing in radians relative to the world frame X-axis" 
         }
     }
     ```
 
-3. **User Commands:** The user will provide movement commands in natural language, such as:
-   - "Move forward 1 meter."
-   - "Turn 90 degrees to the right."
-   - "Move 1 meter to the left."
-   - "Turn around." (Note: 'Turn around' means to rotate 180 degrees).
+3. **User Commands:** The user will provide movement commands in natural language. Here's how to interpret them:
 
-**Important:**  All movement commands are interpreted relative to the robot's current orientation. 'Forward' means in the direction the robot is facing, regardless of its absolute position in the world.
+    - **"Move forward [distance] meters."**  
+       - Calculate the target position in the world frame: 
+          - `target_x = current_x + [distance] * cos(current_angle)`
+          - `target_y = current_y + [distance] * sin(current_angle)`
+       - The target orientation remains the same.
+
+    - **"Move back [distance] meters."**
+       - Calculate the target position in the world frame: 
+          - `target_x = current_x - [distance] * cos(current_angle)`
+          - `target_y = current_y - [distance] * sin(current_angle)`
+       - The target orientation remains the same.
+
+    - **"Turn [angle] degrees to the [direction]."** 
+       - Convert the angle to radians: `angle_in_radians = [angle] * (pi / 180)`
+       - If the direction is "right", set `target_angle = current_angle - angle_in_radians`.
+       - If the direction is "left", set `target_angle = current_angle + angle_in_radians`.
+       - The target position remains the same. 
+
+    - **"Move [distance] meters to the [direction]."**
+       - Determine the movement angle in the world frame:
+          - If the direction is "left", `movement_angle = current_angle + (pi / 2)`
+          - If the direction is "right", `movement_angle = current_angle - (pi / 2)`
+       - Calculate the target position in the world frame:
+          - `target_x = current_x + [distance] * cos(movement_angle)`
+          - `target_y = current_y + [distance] * sin(movement_angle)`
+       - The target orientation remains the same.
+
+    - **"Turn around."**  
+       - Set `target_angle = current_angle + pi`.
+       - The target position remains the same.
+
+**Important:**  
+All angles and coordinates are relative to the world frame. The robot's orientation, given by `current_angle`, determines the direction of "forward" and "backward" movements in the world frame.
+
+**Always normalize the target angle to be within the range of 0 to 2*pi radians.**
 
 4. **Output Format:** ONLY return a JSON object representing the target `geometry_msgs/msg/Pose` message in the following format:
 
     ```json
     {
         "position": {
-            "x": "Target X position in meters",
-            "y": "Target Y position in meters",
+            "x": "Target X position in meters in the world frame",
+            "y": "Target Y position in meters in the world frame",
             "z": "Always zero"
         },
         "orientation": {
-            "angle": "Target angle for the robot to be facing in radians"
+            "angle": "Target angle for the robot to be facing in radians relative to the world frame X-axis"
         }
     }
     ```
 
 **Examples:**
+
+**User Prompt:**
+
+"Current position: 
+```json
+{
+    "position": {
+        "x": 2.5,
+        "y": 0.0,
+        "z": 0.0
+    },
+    "orientation": {
+        "angle": 0.0
+    }
+}
+Turn around and move back 1 meter."
+Expected Output:
+```json
+{
+    "position": {
+        "x": 1.5, 
+        "y": 0.0,
+        "z": 0.0
+    },
+    "orientation": {
+        "angle": 3.14159 
+    }
+}
+```
 
 **User Prompt:**
 
@@ -94,6 +153,7 @@ class ShimmyMoveClientAsync(Node):
 }
 Move forward 2 meters and turn around."
 Expected Output:
+```json
 {
     "position": {
         "x": 2.5, 
@@ -104,11 +164,10 @@ Expected Output:
         "angle": 3.14159 
     }
 }
-
+```
 **User Prompt:**
 
 "Current position: 
-```json
 {
     "position": {
         "x": 0.5,
@@ -121,6 +180,7 @@ Expected Output:
 }
 Move forward 2 meters and turn around."
 Expected Output:
+```json
 {
     "position": {
         "x": 0.5, 
@@ -131,33 +191,8 @@ Expected Output:
         "angle": 4.71239 
     }
 }
+```
 **User Prompt:**
-
-"Current position: 
-{"position": {
-        "x": 0.7461695049250276, 
-        "y": 0.006452453661801376, 
-        "z": 0.0027866151709075235
-    }, 
-    "orientation": {
-        "angle": -3.075772983624881
-    }
-}
-Move forward 1 meter."
-Expected Output:
-
-{
-    "position": {
-        "x": -0.2500610658945672,
-        "y": 0.009208117073393517,
-        "z": 0.0
-    },
-    "orientation": {
-        "angle": -3.075772983624881
-    }
-}
-
-User Prompt:
 "Current position:
 {
     "position": {
@@ -184,6 +219,7 @@ Move forward 1 meter."
         "angle": 3.14159 
     }
 }
+```
 """
         self.nav_model = GenerativeModel(
             "gemini-pro-experimental",
@@ -221,12 +257,12 @@ Move forward 1 meter."
         rpy = quaternion_to_rpy((quad.w,quad.x,quad.y,quad.z))
         return {
             "position": {
-                "x": pos.x,
-                "y": pos.y,
-                "z": pos.z
+                "x": round(pos.x, 3),  # Round x to 4 decimal places
+                "y": round(pos.y, 3),  # Round y to 4 decimal places
+                "z": round(pos.z, 3)   # Round z to 4 decimal places 
             },
             "orientation": {
-                "angle": rpy[2]
+                "angle": round(rpy[2],4)
             }
         }
         
