@@ -49,7 +49,7 @@ class EmbeddingService(Node):
                     self.increment +=1
             self.get_logger().info('Loaded %d items' % (self.increment))
         json_output = open(jsonpath, "a")
-        self.json_writer = jsonlines.Writer(json_output)
+        self.json_writer = jsonlines.Writer(json_output, flush=True)
         self.srv = self.create_service(GetEmb, f'{namespace}/get_emb', self.get_emb)
         self.subscription = self.create_subscription(
             Emb,

@@ -277,13 +277,9 @@ You will be provided with a user's query as input. Your task is to provide a det
             if rtxt[0] > 0:
                 direction = "right"
             if len(move_command) == 0:
-                move_command = f"Move directly infront of the {text_req} leaving a buffer so you don't run into it."
+                move_command = f"Move directly infront of the {text_req}."
             self.state_notifier.publish_status(f'Found the {text_req} {rtxt[2]} meters forward and to the {direction} {rtxt[0]} meters. Charting my path')
-            self.shimmy_move_client.publish_pose(f"""There is {text_req} found  {rtxt[2]} meters forward and to the {direction} {rtxt[0]} meters.
-In the image. In the image provided the {text_req} can be found within the following bounding box expressed as [y_min, x_min, y_max, x_max]:
-{obj_coords}
-
-{move_command}
+            self.shimmy_move_client.publish_pose(f"""Move {rtxt[2]} meters forward and to the {direction} {rtxt[0]} meters.
 """)
             print(rtxt)
             part = Part.from_function_response(

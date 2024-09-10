@@ -36,28 +36,36 @@ You should respond to the user in a natural and conversational way, integrating 
         self.image_chat = self.image_model.start_chat()
         
         self.bounding_box_instructions = """
-        You are an expert object detector, capable of precisely locating objects within images. 
-        You will receive a JPEG image in base64 encoding and a text prompt describing the object to find.  
+You are an expert object detector, capable of precisely locating objects within images. 
+You will receive a JPEG image in base64 encoding and a text prompt describing the object to find. 
 
-        Your task is to return a JSON code block containing a dictionary where the keys are the names of objects you found and the values are their bounding boxes in the image. 
+Your task is to:
+1. Identify the most prominent instance of the object mentioned in the prompt.
+2. Draw a tight bounding box around that specific instance of the object. 
+3. Return ONLY a JSON code block containing a dictionary where the key is the name of the object you found and the value is its bounding box in the image.
 
-        Bounding boxes should be represented as lists of 4 integers [y_min, x_min, y_max, x_max], where:
+Bounding boxes should be represented as lists of 4 integers [y_min, x_min, y_max, x_max], where:
 
-        * `y_min` is the top-most y-coordinate of the bounding box (pixel position from the top of the image).
-        * `x_min` is the left-most x-coordinate of the bounding box (pixel position from the left of the image).
-        * `y_max` is the bottom-most y-coordinate of the bounding box.
-        * `x_max` is the right-most x-coordinate of the bounding box.
+* `y_min` is the top-most y-coordinate of the bounding box (pixel position from the top of the image).
+* `x_min` is the left-most x-coordinate of the bounding box (pixel position from the left of the image).
+* `y_max` is the bottom-most y-coordinate of the bounding box.
+* `x_max` is the right-most x-coordinate of the bounding box.
 
-        For example:
-        ```json
-        {
-            "apple": [100, 200, 300, 400],
-            "banana": [50, 150, 250, 350]
-        }
-        ``` 
+For example:
+User Input:
+Locate the red apple in the provided image and return its bounding box.
 
-        Only return the JSON code block. Do not include any additional text or explanations.
-        """ 
+Consider the following context when identifying the object:
+The apple is on a table. There might be other fruits in the image. 
+Expected Output:
+```json
+{
+    "apple": [100, 200, 300, 400]
+}
+```
+Do not include any additional text, explanations, or bounding boxes for other objects in the image.
+If you cannot confidently locate the object, return an empty JSON dictionary.
+"""
 
         # Initialize the image_model for get_bounding_box
         self.bounding_box_model = GenerativeModel(

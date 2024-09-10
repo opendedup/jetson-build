@@ -192,7 +192,7 @@ global_costmap:
       global_frame: map # Consistent with local_costmap
       robot_base_frame: zed_camera_link # Consistent with local_costmap
       use_sim_time: false
-      robot_radius: 0.25  # Reduce to match Shimmy's actual size 
+      robot_radius: 0.18  # Reduce to match Shimmy's actual size 
       resolution: 0.05
       track_unknown_space: true 
       plugins: ["static_layer", "inflation_layer", "voxel_layer"] # Add voxel_layer
