@@ -11,224 +11,35 @@ import math
 import numpy as np
 
 import vertexai.preview.generative_models as generative_models
-
+from vertexai.preview.generative_models import FunctionDeclaration
 from vertexai.generative_models import (
     GenerativeModel,
-    Part
+    Part,
+    Tool,
+    ToolConfig
 )
 from std_srvs.srv import Empty
 from chat_interfaces.srv import GetPose
 
 class ShimmyMoveClientAsync(Node):
 
-    def __init__(self,namespace=''):
+    def __init__(self,namespace='/shimmy_bot'):
         super().__init__('shimmy_move_client')
         
-        self.shimmy_move_publisher = self.create_publisher(Pose, f'{namespace}/shimmy_bot/move', 10)
-        self.shimmy_turn_publisher = self.create_publisher(Float64, f'{namespace}/shimmy_bot/target_angle', 10)
-        self.shimmy_cancel_publisher = self.create_publisher(Bool, f'{namespace}/shimmy_bot/cancel_move', 10)
+        self.shimmy_move_publisher = self.create_publisher(Pose, f'{namespace}/move', 10)
+        self.shimmy_turn_publisher = self.create_publisher(Float64, f'{namespace}/target_angle', 10)
+        self.shimmy_cancel_publisher = self.create_publisher(Bool, f'{namespace}/cancel_move', 10)
         self.zed_cli = self.create_client(Trigger, "/zed/zed_node/reset_pos_tracking")
         self.rtab_cli = self.create_client(Empty, "/rtabmap/reset")
-        nav_sys_intructions = """You are an expert on ROS 2 navigation using NAV2. Your primary task is to generate accurate coordinates to move a differential drive robot to a specific location or to rotate it in place. 
-
-**Key Instructions:**
-
-1. **Coordinate System:** The robot uses a standard right-handed coordinate system where:
-   - Positive X is forward in the world frame.
-   - Positive Y is left in the world frame.
-   - Angles are measured counterclockwise from the positive X-axis in the world frame (yaw = 0 means facing along the positive X-axis).
-
-2. **Current Position and Orientation:** The user will always provide the robot's current position and orientation in the format shown below. You MUST use this information as your starting point to calculate the target pose.  
-    Below is the format for the current position:
-    ```json
-    {
-        "position": {
-            "x": "X position in meters as float value in the world frame",
-            "y": "Y position in meters as float value in the world frame",
-            "z": "Always zero"
-        },
-        "orientation": {
-            "angle": "angle the robot is currently facing in radians relative to the world frame X-axis" 
-        }
-    }
-    ```
-
-3. **User Commands:** The user will provide movement commands in natural language. Here's how to interpret them:
-
-    - **"Move forward [distance] meters."**  
-       - Calculate the target position in the world frame: 
-          - `target_x = current_x + [distance] * cos(current_angle)`
-          - `target_y = current_y + [distance] * sin(current_angle)`
-       - The target orientation remains the same.
-
-    - **"Move back [distance] meters."**
-       - Calculate the target position in the world frame: 
-          - `target_x = current_x - [distance] * cos(current_angle)`
-          - `target_y = current_y - [distance] * sin(current_angle)`
-       - The target orientation remains the same.
-
-    - **"Turn [angle] degrees to the [direction]."** 
-       - Convert the angle to radians: `angle_in_radians = [angle] * (pi / 180)`
-       - If the direction is "right", set `target_angle = current_angle - angle_in_radians`.
-       - If the direction is "left", set `target_angle = current_angle + angle_in_radians`.
-       - The target position remains the same. 
-
-    - **"Move [distance] meters to the [direction]."**
-       - Determine the movement angle in the world frame:
-          - If the direction is "left", `movement_angle = current_angle + (pi / 2)`
-          - If the direction is "right", `movement_angle = current_angle - (pi / 2)`
-       - Calculate the target position in the world frame:
-          - `target_x = current_x + [distance] * cos(movement_angle)`
-          - `target_y = current_y + [distance] * sin(movement_angle)`
-       - The target orientation remains the same.
-
-    - **"Turn around."**  
-       - Set `target_angle = current_angle + pi`.
-       - The target position remains the same.
-
-**Important:**  
-All angles and coordinates are relative to the world frame. The robot's orientation, given by `current_angle`, determines the direction of "forward" and "backward" movements in the world frame.
-
-**Always normalize the target angle to be within the range of 0 to 2*pi radians.**
-
-4. **Output Format:** ONLY return a JSON object representing the target `geometry_msgs/msg/Pose` message in the following format:
-
-    ```json
-    {
-        "position": {
-            "x": "Target X position in meters in the world frame",
-            "y": "Target Y position in meters in the world frame",
-            "z": "Always zero"
-        },
-        "orientation": {
-            "angle": "Target angle for the robot to be facing in radians relative to the world frame X-axis"
-        }
-    }
-    ```
-
-**Examples:**
-
-**User Prompt:**
-
-"Current position: 
-```json
-{
-    "position": {
-        "x": 2.5,
-        "y": 0.0,
-        "z": 0.0
-    },
-    "orientation": {
-        "angle": 0.0
-    }
-}
-Turn around and move back 1 meter."
-Expected Output:
-```json
-{
-    "position": {
-        "x": 1.5, 
-        "y": 0.0,
-        "z": 0.0
-    },
-    "orientation": {
-        "angle": 3.14159 
-    }
-}
-```
-
-**User Prompt:**
-
-"Current position: 
-```json
-{
-    "position": {
-        "x": 0.5,
-        "y": 0.0,
-        "z": 0.0
-    },
-    "orientation": {
-        "angle": 0.0
-    }
-}
-Move forward 2 meters and turn around."
-Expected Output:
-```json
-{
-    "position": {
-        "x": 2.5, 
-        "y": 0.0,
-        "z": 0.0
-    },
-    "orientation": {
-        "angle": 3.14159 
-    }
-}
-```
-**User Prompt:**
-
-"Current position: 
-{
-    "position": {
-        "x": 0.5,
-        "y": 0.5,
-        "z": 0.0
-    },
-    "orientation": {
-        "angle": 1.5708
-    }
-}
-Move forward 2 meters and turn around."
-Expected Output:
-```json
-{
-    "position": {
-        "x": 0.5, 
-        "y": 2.5,
-        "z": 0.0
-    },
-    "orientation": {
-        "angle": 4.71239 
-    }
-}
-```
-**User Prompt:**
-"Current position:
-{
-    "position": {
-        "x": 1.0,
-        "y": 1.0,
-        "z": 0.0
-    },
-    "orientation": {
-        "angle": 3.14159 
-    }
-}
-Move forward 1 meter."
-
-**Expected Output:**
-
-```json
-{
-    "position": {
-        "x": 0.0,
-        "y": 1.0,
-        "z": 0.0
-    },
-    "orientation": {
-        "angle": 3.14159 
-    }
-}
-```
-"""
-        self.nav_model = GenerativeModel(
-            "gemini-pro-experimental",
-            system_instruction=[nav_sys_intructions]
+        self.nav_tool = Tool(
+            function_declarations=[move_shimmy_func],
         )
-        self.nav_chat = self.nav_model.start_chat()
+        self.nav_model = GenerativeModel(
+            "gemini-1.5-flash-001"
+        )
         self.config = {
             "max_output_tokens": 8192,
-            "temperature": 1,
+            "temperature": 0,
             "top_p": 0.95,
         }
         self.safety_settings = {
@@ -237,7 +48,7 @@ Move forward 1 meter."
             generative_models.HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT: generative_models.HarmBlockThreshold.BLOCK_NONE,
             generative_models.HarmCategory.HARM_CATEGORY_HARASSMENT: generative_models.HarmBlockThreshold.BLOCK_NONE,
         }
-        self.pos_cli = self.create_client(GetPose, f"/shimmy_bot/get_pose")
+        self.pos_cli = self.create_client(GetPose, f"{namespace}/get_pose")
         
         
     
@@ -288,25 +99,35 @@ Move forward 1 meter."
         self.shimmy_cancel_publisher.publish(msg)
     
     def publish_pose(self,command):
-        #self.reset_odom()
-        codom = json.dumps(self.get_odom())
-        c_msg = f"""The current position is:
-        {codom}
-        
-        {command}
-        """
-        print(c_msg)
-        response = self.nav_chat.send_message([c_msg],
-                                generation_config=self.config,stream=False, safety_settings=self.safety_settings)
-        
-        print("###########################################")
-        print(response.text)
-        print(response.text.replace("```json","").replace("```",""))
-        pose = json.loads(response.text.replace("```json","").replace("```",""))
+        self.get_logger().info("processing move command %s" % (command))
+        response = self.nav_model.generate_content(
+            command,
+            stream=False, 
+            safety_settings=self.safety_settings,
+            generation_config=self.config,
+            tools=[self.nav_tool],
+            tool_config=ToolConfig(
+                function_calling_config=ToolConfig.FunctionCallingConfig(
+                    # ANY mode forces the model to predict a function call
+                    mode=ToolConfig.FunctionCallingConfig.Mode.ANY,
+            ))
+        )
+        function_call = response.candidates[0].content.parts[0].function_call
+
+        # Extract parameters from the function call
+        forward_distance = function_call.args.get("forward_distance", 0)
+        right_distance = function_call.args.get("right_distance", 0)
+        rotation_angle = function_call.args.get("rotation_angle", 0)
+
+        # Calculate the goal pose
+        pose = calculate_goal_pose(
+            self.get_odom(), forward_distance, right_distance, rotation_angle
+        )
+        print(pose)
         msg = Pose()
         msg.position.x = float(pose["position"]["x"])
-        msg.position.y = float(pose["position"]["y"])
-        msg.position.z = float(pose["position"]["z"])
+        msg.position.y = float(pose["position"]["y"]*-1) # Left is positive
+        msg.position.z = float(0)
         x, y, z, w = quaternion_from_euler(float(0),float(0),float(pose["orientation"]["angle"]))
         msg.orientation.x = x
         msg.orientation.y = y
@@ -314,33 +135,8 @@ Move forward 1 meter."
         msg.orientation.w = w
         self.shimmy_move_publisher.publish(msg)
         
-    def publish_pose_object(self,command,image):
-        #self.reset_odom()
-        codom = json.dumps(self.get_odom())
-        c_msg = f"""The current position is:
-        {codom}
         
-        {command}
-        """
-        print(c_msg)
-        ipart = Part.from_data(data=image.getvalue(),mime_type="image/jpeg")
-        response = self.nav_chat.send_message([c_msg,ipart],
-                                generation_config=self.config,stream=False, safety_settings=self.safety_settings)
-        
-        print("###########################################")
-        print(response.text)
-        print(response.text.replace("```json","").replace("```",""))
-        pose = json.loads(response.text.replace("```json","").replace("```",""))
-        msg = Pose()
-        msg.position.x = float(pose["position"]["x"])
-        msg.position.y = float(pose["position"]["y"])
-        msg.position.z = float(pose["position"]["z"])
-        x, y, z, w = quaternion_from_euler(float(pose["orientation"]["rpy"][0]),float(pose["orientation"]["rpy"][1]),float(pose["orientation"]["rpy"][2]))
-        msg.orientation.x = x
-        msg.orientation.y = y
-        msg.orientation.z = z
-        msg.orientation.w = w
-        self.shimmy_move_publisher.publish(msg)
+    
 
 def main():
     rclpy.init()
@@ -396,3 +192,81 @@ def quaternion_to_rpy(quaternion):
 
   return np.array([roll, pitch, yaw])
 
+
+def calculate_goal_pose(current_pose, forward_distance=0, right_distance=0, rotation_angle=0):
+    """Calculates the target pose based on the current pose, forward/right distances, and rotation angle.
+
+    Args:
+        current_pose: A dictionary representing the robot's current position and orientation:
+            {
+                "position": {
+                    "x": float,  # X position in meters
+                    "y": float,  # Y position in meters
+                    "z": float  # Z position in meters (always 0 for this example)
+                },
+                "orientation": {
+                    "angle": float  # Angle in radians
+                }
+            }
+        forward_distance: Distance to move forward (positive) or backward (negative) in meters.
+        right_distance: Distance to move right (positive) or left (negative) in meters.
+        rotation_angle: Angle to rotate in radians (counterclockwise is positive).
+
+    Returns:
+        A dictionary representing the target pose in the same format as current_pose.
+    """
+
+    target_pose = current_pose.copy()  # Start with the current pose
+
+    # Extract current position and orientation
+    current_x = current_pose["position"]["x"]
+    current_y = current_pose["position"]["y"]
+    current_angle = current_pose["orientation"]["angle"]
+
+    # Calculate movement angle based on current orientation and right_distance
+    movement_angle = current_angle - (math.pi / 2) * (right_distance / abs(right_distance)) if right_distance else current_angle
+
+    # Calculate new position
+    target_pose["position"]["x"] = current_x + forward_distance * math.cos(current_angle) + right_distance * math.cos(movement_angle)
+    target_pose["position"]["y"] = current_y + forward_distance * math.sin(current_angle) + right_distance * math.sin(movement_angle)
+
+    # Calculate new orientation
+    target_pose["orientation"]["angle"] = (current_angle + rotation_angle + 2 * math.pi) % (2 * math.pi)
+
+    return target_pose
+
+move_shimmy_func = FunctionDeclaration(
+    name="move_shimmy",
+    description="""
+    Calculate the target pose for the robot based on a natural language command 
+    that includes forward/backward movement, left/right movement, and rotation.
+
+    The command should be in the format: 
+    "Move [forward_distance] meters [forward/back], [to the left/right] [right_distance] meters, and [turn around/rotate [angle] degrees [left/right]]"
+
+    Examples:
+    * "Move 1.25 meters forward, to the left 0.31 meters, and turn around"
+    * "Move 2 meters back, to the right 1 meter, and rotate 90 degrees left"
+    * "Move 0.5 meters forward and turn around"
+    * "Move 1 meter to the right"
+    * "Turn around"
+    """,
+    parameters={
+        "type": "object",
+        "properties": {
+            "forward_distance": {
+                "type": "number",
+                "description": "Distance to move forward (positive) or backward (negative) in meters."
+            },
+            "right_distance": {
+                "type": "number",
+                "description": "Distance to move right (positive) or left (negative) in meters."
+            },
+            "rotation_angle": {
+                "type": "number",
+                "description": "Angle to rotate in radians (counterclockwise is positive)."
+            }
+        },
+        "required": ["forward_distance", "right_distance", "rotation_angle"]
+    },
+)

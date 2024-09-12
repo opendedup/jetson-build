@@ -111,7 +111,7 @@ Some Facts about you can use in context when answering questions:
         
         vertexai.init(project="lemmingsinthewind", location="us-central1")
         self.system_prompt = self.get_parameter("prompt").value
-        model = GenerativeModel("gemini-flash-experimental",tools=[Tool(
+        model = GenerativeModel("gemini-1.5-flash-001",tools=[Tool(
         function_declarations=robot_agents)],system_instruction=[self.system_prompt])
         self.robot_names = self.get_parameter("robot_names").value
         
@@ -195,6 +195,7 @@ Some Facts about you can use in context when answering questions:
             self.get_logger().info("processing_text %s" % (text))
             
             text = deEmojify(text)
+            text = text.replace("*", " ") 
             input_text = texttospeech.SynthesisInput(text=text)
             response = self.tts_service.synthesize_speech(
                 input=input_text, voice=self.voice, audio_config=self.audio_config
@@ -411,21 +412,23 @@ Some Facts about you can use in context when answering questions:
                                 self.get_logger().error('%s' % traceback.format_exc())
                         
     def system_message_callback(self, msg):
-        prompt = Prompt(
-            prompt_data=[msg.data],
-            model_name="gemini-flash-experimental",
-            generation_config=self.config,
-            safety_settings=self.safety_settings,
-            system_instruction=[self.system_prompt + "\n" + "Your job is to reword incoming statements and put it in your own words as if you were saying them.\n"]
-        )
-        responses = prompt.generate_content(
-            contents=prompt.assemble_contents(),
-            stream=True,
-        )
-        for response in responses:
-            self.get_logger().info(response.text)
-            self.text_q.put(response.text)
-        
+        try:
+            prompt = Prompt(
+                prompt_data=[msg.data],
+                model_name="gemini-flash-experimental",
+                generation_config=self.config,
+                safety_settings=self.safety_settings,
+                system_instruction=[self.system_prompt + "\n" + "Your job is to reword incoming statements and put it in your own words as if you were saying them.\n"]
+            )
+            responses = prompt.generate_content(
+                contents=prompt.assemble_contents(),
+                stream=True,
+            )
+            for response in responses:
+                self.get_logger().info(response.text)
+                self.text_q.put(response.text)
+        except Exception:
+            self.get_logger().error('%s' % traceback.format_exc())
 
     def listener_callback(self, msg):
         person = msg.person

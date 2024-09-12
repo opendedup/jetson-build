@@ -147,7 +147,7 @@ class VAD(Process):
             use_channel: int = 0,
             speech_threshold: float = 0.6,
             max_filter_window: int = 1,
-            trailing_silence_frames: int = 3,  # Number of silent frames to detect end of speech
+            trailing_silence_frames: int = 4,  # Number of silent frames to detect end of speech
             ready_flag = None,
             speech_start_flag = None,
             speech_end_flag = None):

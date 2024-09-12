@@ -7,9 +7,7 @@ from rclpy.executors import MultiThreadedExecutor
 
 from geometry_msgs.msg import Pose
 
-import json
-import threading
-import time
+
 import traceback
 
 from geometry_msgs.msg import PoseStamped
@@ -18,6 +16,9 @@ from rclpy.duration import Duration
 
 from std_msgs.msg import ( Float64, Bool)
 from rclpy.time import Time
+from std_msgs.msg import String
+
+from geometry_msgs.msg import Twist
 
 from chat_interfaces.srv import GetPose
 
@@ -35,6 +36,7 @@ class ShimmyMoveService(Node):
         self.nav_publisher = self.create_publisher(PoseStamped, '/goal_pose', 10)
         self.moving_publisher = self.create_publisher(Bool, f'{namespace}/moving', 10)
         self.pose_svc = self.create_service(GetPose, f'{namespace}/get_pose', self.get_pose)
+        self.system_message_publisher  = self.create_publisher(String, f'{namespace}/system_message', 10)
 
         
         self.cancel_move_subscription = self.create_subscription(
@@ -49,8 +51,14 @@ class ShimmyMoveService(Node):
             '/zed/zed_node/pose',
             self.odom_callback,10)
         self.move_active = False  # Flag to track move status
+        self.wiggle()
         self.navigator = BasicNavigator()  # Initialize the navigator
         
+    def publish_status(self,status):
+        msg = String()
+        msg.data = status
+        self.system_message_publisher.publish(msg)
+    
     def get_pose(self,request, response):
         response.pose = self.pos
         return response
@@ -60,6 +68,40 @@ class ShimmyMoveService(Node):
     
     def cancel_move_callback(self,msg: Bool):
         self.cancel_move = True
+        
+    
+    def wiggle(self):
+        """Moves the robot back and forth rapidly 4 times."""
+
+        # Publisher for the /cmd_vel topic
+        self.cmd_vel_pub = self.create_publisher(Twist, '/cmd_vel', 10)
+        
+        # Initialize movement counter
+        self.move_count = 0
+
+        # Create a timer to handle back-and-forth motion
+        self.timer = self.create_timer(1.0, self.wiggle_callback)  # 1.5 seconds for each movement
+
+    def wiggle_callback(self):
+        """Callback function for the timer, handles movement logic."""
+
+        twist = Twist()  # Create a new Twist message each time
+
+        if self.move_count < 9: # 8 movements (4 cycles of back and forth)
+            if self.move_count % 2 == 0:
+                twist.linear.x = 4.0  # Move forward
+            else:
+                twist.linear.x = -4.0  # Move backward
+
+            self.cmd_vel_pub.publish(twist)
+            self.move_count += 1
+
+        else:
+            # Stop the robot and cancel the timer
+            twist.linear.x = 0.0
+            self.cmd_vel_pub.publish(twist)
+            self.destroy_timer(self.timer)
+
     
             
              
@@ -95,20 +137,20 @@ class ShimmyMoveService(Node):
 
             # Go to our demos first goal pose
             goal_pose = PoseStamped()
-            goal_pose.header.frame_id = 'odom'
+            goal_pose.header.frame_id = 'map'
             goal_pose.header.stamp = Time(seconds=0, nanoseconds=0).to_msg()  # Set timestamp to 0
             goal_pose.pose = msg
 
             # sanity check a valid path exists
             # path = navigator.getPath(initial_pose, goal_pose)
 
-            #navigator.goToPose(goal_pose)
-            self.nav_publisher.publish(goal_pose)
+            self.navigator.goToPose(goal_pose)
+            #self.nav_publisher.publish(goal_pose)
             i = 0
             while not self.navigator.isTaskComplete():
                 if self.cancel_move:
-                    print("############################################")
                     self.navigator.cancelTask()
+                    self.publish_status("Move Was Cancelled")
                 else:
                     i = i + 1
                     feedback = self.navigator.getFeedback()
@@ -130,20 +172,25 @@ class ShimmyMoveService(Node):
                             self.navigator.cancelTask()
 
                         # Some navigation request change to demo preemption
-                        if Duration.from_msg(feedback.navigation_time) > Duration(seconds=18.0):
+                        if Duration.from_msg(feedback.navigation_time) > Duration(seconds=300.0):
                             goal_pose.pose.position.x = 0.0
                             goal_pose.pose.position.y = 0.0
                             self.navigator.goToPose(goal_pose)
 
             # Do something depending on the return code
             result = self.navigator.getResult()
+            self.get_logger().info(f"Result = {result}")
             if result == TaskResult.SUCCEEDED:
+                self.publish_status("Finished Move")
                 self.get_logger().info('Goal succeeded!')
             elif result == TaskResult.CANCELED:
+                self.publish_status("Move Was Canceled")
                 self.get_logger().info('Goal was canceled!')
             elif result == TaskResult.FAILED:
+                self.publish_status("Move Failed")
                 self.get_logger().info('Goal failed!')
             else:
+                self.publish_status("Move Failed for some unkown reason.")
                 self.get_logger().info('Goal has an invalid return status!')
             msg = Bool()
             msg.data = False

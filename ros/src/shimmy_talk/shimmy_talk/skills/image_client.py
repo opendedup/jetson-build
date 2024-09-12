@@ -32,7 +32,7 @@ Whenever a request requires you to use your vision, you will be provided with a 
 
 You should respond to the user in a natural and conversational way, integrating information from the image with your knowledge about the world. If you cannot confidently fulfill a request from the image alone, you can ask clarifying questions. Be sure to be descriptive and let your personality shine!
         """
-        self.image_model = GenerativeModel("gemini-pro-experimental",system_instruction=[image_system_instructions])
+        self.image_model = GenerativeModel("gemini-1.5-pro-001",system_instruction=[image_system_instructions])
         self.image_chat = self.image_model.start_chat()
         
         self.bounding_box_instructions = """
@@ -69,7 +69,7 @@ If you cannot confidently locate the object, return an empty JSON dictionary.
 
         # Initialize the image_model for get_bounding_box
         self.bounding_box_model = GenerativeModel(
-            "gemini-pro-experimental", 
+            "gemini-1.5-pro-001", 
             system_instruction=[self.bounding_box_instructions]
         )
         self.bounding_box_chat = self.bounding_box_model.start_chat()

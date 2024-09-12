@@ -255,7 +255,7 @@ You will be provided with a user's query as input. Your task is to provide a det
             part = Part.from_function_response(
                 name="find_object_with_eyes",
                 response={
-                    "content": {"description":f"{text_req} found about {rtxt[2]} meters in front and {rtxt[0]} meters to the {direction}."}
+                    "content": {"description":f"{text_req} found about {rtxt[2]} meters in front and {abs(rtxt[0])} meters to the {direction}."}
                 }
             )
             
@@ -278,14 +278,14 @@ You will be provided with a user's query as input. Your task is to provide a det
                 direction = "right"
             if len(move_command) == 0:
                 move_command = f"Move directly infront of the {text_req}."
-            self.state_notifier.publish_status(f'Found the {text_req} {rtxt[2]} meters forward and to the {direction} {rtxt[0]} meters. Charting my path')
-            self.shimmy_move_client.publish_pose(f"""Move {rtxt[2]} meters forward and to the {direction} {rtxt[0]} meters.
+            self.state_notifier.publish_status(f'Found the {text_req} {rtxt[2]} meters forward and to the {direction} {abs(rtxt[0])} meters. Charting my path')
+            self.shimmy_move_client.publish_pose(f"""Move {rtxt[2]} meters forward and to the {direction} {abs(rtxt[0])} meters.
 """)
             print(rtxt)
             part = Part.from_function_response(
                 name="move_to_object_with_wheels",
                 response={
-                    "content": {"description":f"{text_req} found about {rtxt[2]} meters in front. Moving to {text_req}"},
+                    "content": {"description":f"{text_req} found about {rtxt[2]} meters in front. Moving to {text_req} but not there yet."},
                 },
             )
             
