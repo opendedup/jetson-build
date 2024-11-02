@@ -287,7 +287,7 @@ User: Hey Bob, do you want to go for a walk?
 
 """
         
-        self.audio_model = GenerativeModel("gemini-flash-experimental",system_instruction=[system_prompt])
+        self.audio_model = GenerativeModel("gemini-1.5-flash-002",system_instruction=[system_prompt])
         #self.audio_chat = self.audio_model.start_chat()
         
         self.safety_settings = {
@@ -421,7 +421,7 @@ class GEMINIPublisher(Node):
         return future.result()
     
     def publish_embedding(self,name,embedding,map={}):
-        self.get_logger().info('sssss Publishing: "%s"' % name)
+        self.get_logger().info('Publishing: "%s"' % name)
         msg = Emb()
         map["name"] = name
         msg.metadata = json.dumps(map)

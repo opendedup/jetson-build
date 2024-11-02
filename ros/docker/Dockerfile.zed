@@ -1,7 +1,7 @@
 FROM us-central1-docker.pkg.dev/lemmingsinthewind/ros2/ros2base:0.3
 
 ARG ZED_SDK_MAJOR=4
-ARG ZED_SDK_MINOR=1
+ARG ZED_SDK_MINOR=2
 ARG JETPACK_MAJOR=5
 ARG L4T_MAJOR=36
 ARG L4T_MINOR=3

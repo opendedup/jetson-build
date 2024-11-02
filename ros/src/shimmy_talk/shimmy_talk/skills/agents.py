@@ -51,7 +51,7 @@ class AgentRunner:
             ),
         ]
         self.wbmodel = GenerativeModel(
-            "gemini-1.5-pro-001",
+            "gemini-1.5-pro-002",
             tools=tools,
             system_instruction=["""You are a world-class research agent, adept at using Google Search to find comprehensive and detailed information on any topic. Your goal is to provide the most informative and insightful answers possible.
 

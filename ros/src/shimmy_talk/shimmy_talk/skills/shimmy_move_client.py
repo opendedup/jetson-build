@@ -35,7 +35,7 @@ class ShimmyMoveClientAsync(Node):
             function_declarations=[move_shimmy_func],
         )
         self.nav_model = GenerativeModel(
-            "gemini-1.5-flash-001"
+            "gemini-1.5-pro-001"
         )
         self.config = {
             "max_output_tokens": 8192,

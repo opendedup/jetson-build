@@ -3,10 +3,11 @@ import traceback
 import rclpy
 from rclpy.node import Node
 import vertexai
-from vertexai.preview.generative_models import (
+from vertexai.generative_models import (
     GenerativeModel,
     Part,
     Tool,
+    Content
 )
 import vertexai.preview.generative_models as generative_models
 
@@ -66,8 +67,8 @@ class GoogleASRSubscriber(Node):
         self.declare_parameter('auto_response_threshold',0.35)
         self.declare_parameter('auto_response_timeout',20000)
         self.declare_parameter('volume_adjust',-10)
-        self.declare_parameter('voice','en-US-Journey-O')
-        self.declare_parameter('train_voice_name','en-US-Journey-O')
+        self.declare_parameter('voice','en-US-Journey-F')
+        self.declare_parameter('train_voice_name','en-US-Journey-F')
         self.declare_parameter('transcript_file','/opt/shimmy/transcript.log')
         self.declare_parameter('robot_names',["Jimmy","Schimmel", "Schimmy","Shimmy","Shimmel","Shumi","Shimi","Shami","Shiml"])
         self.declare_parameter('prompt',"""Your name is Shimmy, which is short for Schimmel.
@@ -111,7 +112,7 @@ Some Facts about you can use in context when answering questions:
         
         vertexai.init(project="lemmingsinthewind", location="us-central1")
         self.system_prompt = self.get_parameter("prompt").value
-        model = GenerativeModel("gemini-1.5-flash-001",tools=[Tool(
+        model = GenerativeModel("gemini-1.5-flash-002",tools=[Tool(
         function_declarations=robot_agents)],system_instruction=[self.system_prompt])
         self.robot_names = self.get_parameter("robot_names").value
         
@@ -158,6 +159,21 @@ Some Facts about you can use in context when answering questions:
         self.stop_speaking_event = threading.Event()  # Event to stop audio playback
         self.stop_text_generation_event = threading.Event()  # Event to stop text generation
         
+        self.function_handlers = {
+            'use_web_browser': self.handle_use_web_browser,
+            'change_led_color': self.handle_change_led_color,
+            'change_brightness': self.handle_change_brightness,
+            'get_power': self.handle_get_power,
+            'move_around': self.handle_move_shimmy,
+            'change_led_pattern': self.handle_change_led_pattern,
+            'get_time': self.handle_get_time,
+            'change_voice_volume': self.handle_change_voice_volume,
+            'use_robot_eyes': self.handle_use_robot_eyes,
+            'stop_moving': self.handle_stop_moving,
+            'find_object_with_eyes': self.handle_find_object,
+            'move_to_object_with_wheels': self.handle_move_to_object,
+            'remember_image_objects': self.handle_remember_image_objects,
+        }
         
         
  
@@ -208,14 +224,14 @@ Some Facts about you can use in context when answering questions:
             
     
     def read_input(self,msg,person):
-        self.get_logger().info("Person %s match" %(person))
+        self.get_logger().debug("Person %s match" %(person))
         
         if person in self.robot_names:
-            self.get_logger().info("Ignoring %s match" %(person))
+            self.get_logger().debug("Ignoring %s match" %(person))
         else:
             responses = self.chat.send_message(f"{person} - \"{msg.chat_text}\"",
                                     generation_config=self.config,stream=True, safety_settings=self.safety_settings)
-            self.parse_responses(responses,person)
+            self.parse_responses(responses,person,f"{person} - \"{msg.chat_text}\"")
             
     def handle_use_web_browser(self, part, person):
         context = part.function_call.args["search_txt"]
@@ -291,59 +307,44 @@ Some Facts about you can use in context when answering questions:
     def handle_remember_image_objects(self, part, person):
         return self.robot_runner.remember_image_objects(part.function_call.args["picture_context"])
             
-    def parse_responses(self, responses, person):
+    def parse_responses(self, responses, person,msg):
         api_parts = []
 
         # Define a dictionary mapping function names to handler functions
-        function_handlers = {
-            'use_web_browser': self.handle_use_web_browser,
-            'change_led_color': self.handle_change_led_color,
-            'change_brightness': self.handle_change_brightness,
-            'get_power': self.handle_get_power,
-            'move_around': self.handle_move_shimmy,
-            'change_led_pattern': self.handle_change_led_pattern,
-            'get_time': self.handle_get_time,
-            'change_voice_volume': self.handle_change_voice_volume,
-            'use_robot_eyes': self.handle_use_robot_eyes,
-            'stop_moving': self.handle_stop_moving,
-            'find_object_with_eyes': self.handle_find_object,
-            'move_to_object_with_wheels': self.handle_move_to_object,
-            'remember_image_objects': self.handle_remember_image_objects,
-        }
+        
+        response_function_call_content = None
+            
+        for response in responses:
+            
+            self.get_logger().info("CMD = %s" % (response.candidates[0]))
 
-        while responses is not None and not self.stop_text_generation_event.is_set():
-            for response in responses:
+            for part in response.candidates[0].content.parts:
                 api_part = None
-                self.get_logger().info("CMD = %s" % (response.candidates[0]))
+                self.get_logger().info("Part = %s" % (part))
+                fcmd = part.function_call.name
 
-                for part in response.candidates[0].content.parts:
-                    self.get_logger().info("Part = %s" % (part))
-                    fcmd = part.function_call.name
-
-                    # Call the appropriate handler function if it exists
-                    handler = function_handlers.get(fcmd)
-                    if handler:
-                        api_part = handler(part, person)  # Pass necessary arguments to the handler
-
-                    elif len(part.text) > 0:
-                        self.text_q.put(part.text)
-                        self.get_logger().info(part.text)
-                    if self.stop_text_generation_event.is_set(): # Check for interruption
-                        responses = None # Stop processing responses
-                        api_parts = []
-                        break # Exit 'for' loop
-                    if api_part is not None:
-                        api_parts.append(api_part)
-                        responses = None  # Break out of the inner loop
-
-                    else:
-                        responses = None  # Break out of the inner loop
-
-        if api_parts:
+                # Call the appropriate handler function if it exists
+                handler = self.function_handlers.get(fcmd)
+                if handler:
+                    response_function_call_content = response.candidates[0].content
+                    api_part = handler(part, person)  # Pass necessary arguments to the handler
+                    api_parts.append(api_part)
+                elif len(part.text) > 0:
+                    self.text_q.put(part.text)
+                    self.get_logger().debug(part.text)
+                if self.stop_text_generation_event.is_set(): # Check for interruption
+                    responses = None # Stop processing responses
+                    api_parts = []
+                    break # Exit 'for' loop
+                        
+                        
+        if len(api_parts) > 0:
+            print(api_parts)
             n_responses = self.chat.send_message(
-                api_parts, generation_config=self.config, stream=True, safety_settings=self.safety_settings
+                api_parts, 
+                generation_config=self.config, stream=True, safety_settings=self.safety_settings
             )
-            self.parse_responses(n_responses, person)
+            self.parse_responses(n_responses, person,msg)
             
             
     
@@ -351,9 +352,9 @@ Some Facts about you can use in context when answering questions:
         block_size = 1024
         while True:
             try:
-                self.get_logger().info("waiting for audio block")
+                self.get_logger().debug("waiting for audio block")
                 audio_task = self.audio_q.get(block=True)
-                self.get_logger().info("got audio block")
+                self.get_logger().debug("got audio block")
                 wf = wave.open(audio_task.result())
 
                 data = wf.readframes(block_size)
@@ -405,7 +406,7 @@ Some Facts about you can use in context when answering questions:
                             talk_text = " ".join(sentences)
                             try:
                                 self.audio_q.put(executor.submit(self.get_speech, talk_text))
-                                self.get_logger().info(f"end saying {talk_text}")
+                                self.get_logger().debug(f"end saying {talk_text}")
                                 resp_text = ""
                             
                             except Exception:
@@ -415,7 +416,7 @@ Some Facts about you can use in context when answering questions:
         try:
             prompt = Prompt(
                 prompt_data=[msg.data],
-                model_name="gemini-flash-experimental",
+                model_name="gemini-1.5-flash-002",
                 generation_config=self.config,
                 safety_settings=self.safety_settings,
                 system_instruction=[self.system_prompt + "\n" + "Your job is to reword incoming statements and put it in your own words as if you were saying them.\n"]
