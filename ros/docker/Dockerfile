@@ -49,7 +49,7 @@ RUN git clone https://github.com/google/sentencepiece && \
 	rm -r -f sentencepiece
 
 
-RUN git clone --depth=1 -b v1.23.0 --recursive https://github.com/nvidia/nemo && \
+RUN git clone --depth=1 -b v2.1.0 --recursive https://github.com/nvidia/nemo && \
     cd nemo && \
     sed 's|^numpy.*|numpy|g' -i requirements/requirements.txt && \
     cat requirements/requirements.txt && \

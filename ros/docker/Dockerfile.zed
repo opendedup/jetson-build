@@ -14,7 +14,7 @@ ARG DIAGNOSTICS_VERSION=3.0.0
 ARG AMENT_LINT_VERSION=0.12.4
 ARG GEOGRAPHIC_INFO_VERSION=1.0.4
 ARG ROBOT_LOCALIZATION_VERSION=3.4.2
-ENV DEBIAN_FRONTEND noninteractive
+ENV DEBIAN_FRONTEND=noninteractive
 
 # Disable apt-get warnings
 RUN apt-key adv --keyserver keyserver.ubuntu.com --recv-keys 42D5A192B819C5DA || true && \
@@ -42,7 +42,7 @@ RUN echo "# R${L4T_MAJOR} (release), REVISION: ${L4T_MINOR}" > /etc/nv_tegra_rel
   rm -rf ZED_SDK_Linux_JP.run 
 
 # Install the ZED ROS2 Wrapper
-ENV ROS_DISTRO ${ROS2_DIST}
+ENV ROS_DISTRO=${ROS2_DIST}
 
 RUN  curl -sSL https://raw.githubusercontent.com/ros/rosdistro/master/ros.key -o /usr/share/keyrings/ros-archive-keyring.gpg && \
 echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/ros-archive-keyring.gpg] http://packages.ros.org/ros2/ubuntu $(lsb_release -cs) main" | tee /etc/apt/sources.list.d/ros2.list > /dev/null &&\
