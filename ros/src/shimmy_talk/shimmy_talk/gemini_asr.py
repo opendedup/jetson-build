@@ -23,12 +23,10 @@ import usb.util
 import scipy.io.wavfile as wav
 import io
 from .asr_utils import Microphone,VAD,StartEndMonitor
+from whisper_trt.vad import load_vad
 from pydub import AudioSegment
 
 import json
-import vertexai
-from vertexai.generative_models import GenerativeModel, Part, Content
-import vertexai.generative_models as generative_models
 from pyannote.audio import Model
 from pyannote.audio import Inference
 import torch 
@@ -38,7 +36,11 @@ from embeddings.srv import GetEmb
 from embeddings.msg import Emb
 from .utils import HistoryFIFOCache
 
+from google import genai
+from google.genai import types
 
+import logging
+from logging.handlers import RotatingFileHandler
 
 
 class GEMINIASR(Process):
@@ -49,12 +51,11 @@ class GEMINIASR(Process):
         self.use_channel = use_channel
         self.ready_flag = ready_flag
         self.output_queue = output_queue
-        vertexai.init(project="lemmingsinthewind", location="us-central1")
         self.chat_history = HistoryFIFOCache(history_limit)
         system_prompt = """
 You are Shimmy, a robot with advanced audio processing capabilities. Your primary task is to:
 
-1. **Transcribe Audio:** Convert spoken audio into text. You are an expert at transcription. If you only hear noise, return an empty string for `chat_text`.
+1. **Transcribe Audio:** Convert spoken audio into text. You are an expert at audio to text transcription. If you only hear noise, return an empty string for `chat_text`.
 2. **Analyze Conversation:** Identify conversational features, focusing on adjacency pairs and **intended audience**.
 3. **Track Speakers:** Understand voices based on history and introductions to remember and identify speakers. 
 
@@ -286,21 +287,42 @@ User: Hey Bob, do you want to go for a walk?
 ``` 
 
 """
-        
-        self.audio_model = GenerativeModel("gemini-1.5-flash-002",system_instruction=[system_prompt])
-        #self.audio_chat = self.audio_model.start_chat()
-        
-        self.safety_settings = {
-            generative_models.HarmCategory.HARM_CATEGORY_HATE_SPEECH: generative_models.HarmBlockThreshold.BLOCK_ONLY_HIGH,
-            generative_models.HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT: generative_models.HarmBlockThreshold.BLOCK_ONLY_HIGH,
-            generative_models.HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT: generative_models.HarmBlockThreshold.BLOCK_ONLY_HIGH,
-            generative_models.HarmCategory.HARM_CATEGORY_HARASSMENT: generative_models.HarmBlockThreshold.BLOCK_ONLY_HIGH,
-        }
-        self.config = {
-            "max_output_tokens": 8192,
-            "temperature": 0,
-            "top_p": 0.95,
-        }
+        try:
+            project_id = "lemmingsinthewind"
+            location = "us-central1"
+            # Initialize client using genai.Client for Vertex
+            self.client = genai.Client(vertexai=True, project=project_id, location=location)
+            logging.info(f"Using google-genai client with Vertex AI backend (Project: {project_id}, Location: {location})")
+        except KeyError as e:
+            logging.error(f"Missing environment variable for Vertex AI: {e}. Please set GOOGLE_CLOUD_PROJECT and GOOGLE_CLOUD_LOCATION.")
+            self.client = None # Indicate client initialization failed
+            raise EnvironmentError(f"Missing required environment variable for Vertex AI: {e}") from e
+        except Exception as e:
+             logging.error(f"Failed to initialize genai.Client for Vertex AI: {e}")
+             self.client = None # Indicate client initialization failed
+             raise RuntimeError(f"Failed to initialize genai.Client: {e}") from e
+        self.audio_model = "gemini-2.0-flash-001"
+        self.config = types.GenerateContentConfig(
+            max_output_tokens=8192,
+            temperature=0.0, # Use float
+            top_p=0.95,
+            response_modalities = ["TEXT"],
+            safety_settings = [types.SafetySetting(
+            category="HARM_CATEGORY_HATE_SPEECH",
+            threshold="OFF"
+            ),types.SafetySetting(
+            category="HARM_CATEGORY_DANGEROUS_CONTENT",
+            threshold="OFF"
+            ),types.SafetySetting(
+            category="HARM_CATEGORY_SEXUALLY_EXPLICIT",
+            threshold="OFF"
+            ),types.SafetySetting(
+            category="HARM_CATEGORY_HARASSMENT",
+            threshold="OFF"
+            )],
+            system_instruction=[types.Part.from_text(text=system_prompt)],
+        )
+        self.audio_chat = self.client.chats.create(model=self.audio_model,config=self.config)
         
         self.shimmy_voice = None
         
@@ -365,20 +387,14 @@ User: Hey Bob, do you want to go for a walk?
                 
                 
                 
-                ipart = Part.from_data(data=flac_audio_data.getvalue(),mime_type="audio/flac")
+                ipart = types.Part.from_bytes(data=flac_audio_data.getvalue(),mime_type="audio/flac")
     
-                history_content = self.chat_history.get_history()
-                if self.shimmy_voice is not None:
-                    history_content.append(Content(role="user", parts=[Part.from_text("This is what shimmy's voice sounds like."),self.shimmy_voice]))
-                audio_chat = self.audio_model.start_chat(history=history_content)
-                response = audio_chat.send_message(
+                 
+                response = self.audio_chat.send_message(
                                 ["here is the audio. only return the json.",ipart], 
-                                generation_config=self.config,
-                                stream=False, 
-                                safety_settings=self.safety_settings
                             )
                 
-                self.chat_history.push(Content(role="user", parts=[ipart]))
+                #self.chat_history.push(type.Content(role="user", parts=[ipart]))
                 dialog = json.loads(response.text.replace("```json","").replace("```",""))
                 print(dialog)
                 if len(dialog["chat_text"]) > 0:
@@ -387,10 +403,17 @@ User: Hey Bob, do you want to go for a walk?
                     t1 = time.perf_counter_ns()
                     dialog["time"] = (t1 - t0) / 1e9
                     dialog["embeddings"] = embeddings
+                    
+                    # Add logic to set stop_talking flag when high VAD is detected for non-Shimmy speakers
+                    # This helps prevent Shimmy from continuing to talk when a user is speaking
+                    if dialog['person_talking'] != 'Shimmy' and dialog['person_talking'] != 'unknown' and 'voice_prob' in dialog:
+                        # If strong voice activity and not from Shimmy, set stop_talking
+                        if dialog['voice_prob'] > 0.7:  # High voice probability threshold
+                            dialog['stop_talking'] = True
+                    
                     t1 = time.perf_counter_ns()
                     self.output_queue.put(dialog)
-                    model_text_part = Part.from_text(dialog["chat_text"])
-                    self.chat_history.push(Content(role="model", parts=[model_text_part])) 
+                    #model_text_part = types.Part.from_text(dialog["chat_text"])
             except:
                 print('Failed turning sound into text')
                 print('%s' % traceback.format_exc())
@@ -401,16 +424,41 @@ class GEMINIPublisher(Node):
     def __init__(self,namespace='/shimmy_bot'):
         super().__init__('gemini_asr_publisher')
         self.publisher_ = self.create_publisher(Chat, f'{namespace}/asr', 10)
+        # VAD detection publisher (created here, passed to VAD process)
+        self.vad_publisher = self.create_publisher(Chat, f'{namespace}/vad_detection', 
+                                                 rclpy.qos.qos_profile_sensor_data) # Use SensorData QoS
+        
+        # Add parameters for VAD sensitivity
+        self.declare_parameter('vad_threshold', 0.6)  # Threshold for voice activity detection
+        self.declare_parameter('vad_publish_interval', 0.1)  # Seconds between VAD publications
+        self.declare_parameter('vad_segmentation_threshold', 0.6) # Separate threshold for segmentation
+        
         dev = usb.core.find(idVendor=0x2886, idProduct=0x0018)
-        self.r_mic = Tuning(dev)
+        # Ensure Tuning object is created and stored
+        if dev:
+             self.r_mic = Tuning(dev)
+        else:
+             self.get_logger().error("ReSpeaker Mic Array not found!")
+             self.r_mic = None # Handle case where mic is not found
+             # Consider raising an exception or exiting if mic is essential
+
+        # Ensure logger is available before starting thread
+        self.logger = self.get_logger() 
+
         t = threading.Thread(target=self.lworker)
+        t.daemon = True # Ensure thread exits when node shuts down
         t.start()
+        
+        # --- FAISS Service Clients --- 
         self.cli = self.create_client(GetEmb, f"{namespace}/get_emb")
         self.emb_publisher = self.create_publisher(Emb, f'{namespace}/embeddings', 10)
         
+        # Wait for FAISS service
         while not self.cli.wait_for_service(timeout_sec=1.0):
-            self.get_logger().info(f'faiss service {namespace} not available, waiting again...')
-        self.emb_publisher
+            self.logger.info(f'FAISS service {namespace}/get_emb not available, waiting again...')
+        self.logger.info(f'FAISS service {namespace}/get_emb available.')
+
+        self.logger.info("GEMINIPublisher initialized.")
         
     def send_request(self,embedding,k=1):
         emb_req = GetEmb.Request()
@@ -432,66 +480,150 @@ class GEMINIPublisher(Node):
 
     def lworker(self):
         try:
+            self.logger.info("GEMINI ASR lworker thread started.")
             audio_chunks = Queue(maxsize=200)
-            speech_segments = Queue(maxsize=200)
-            output_queue = Queue(maxsize=200)
+            speech_segments = Queue(maxsize=200) # Queue for VAD process output (segments for ASR)
+            output_queue = Queue(maxsize=200) # Queue for ASR process output (final results)
             vad_ready = Event()
             asr_ready = Event()
-            speech_start = Event()
+            speech_start = Event() # For monitoring speech start/end
             speech_end = Event()
 
+            # Create ASR process
+            asr = GEMINIASR(speech_segments, output_queue, ready_flag=asr_ready)
 
-            asr = GEMINIASR(speech_segments,output_queue, ready_flag=asr_ready)
+            # Get VAD parameters
+            vad_threshold_realtime = self.get_parameter('vad_threshold').value
+            vad_publish_interval = self.get_parameter('vad_publish_interval').value
+            vad_threshold_segmentation = self.get_parameter('vad_segmentation_threshold').value
 
-            vad = VAD(audio_chunks, speech_segments, max_filter_window=1, ready_flag=vad_ready, speech_start_flag=speech_start, speech_end_flag=speech_end)
+            # Create VAD process, passing the publisher and necessary parameters
+            vad = VAD(
+                input_queue=audio_chunks,
+                output_queue=speech_segments,
+                vad_publisher=self.vad_publisher, # Pass the publisher
+                node_logger=self.logger, # Pass the node's logger
+                vad_threshold=vad_threshold_realtime, # For real-time publishing logic
+                vad_publish_interval=vad_publish_interval,
+                r_mic_tuning=self.r_mic, # Pass the tuning object
+                speech_threshold=vad_threshold_segmentation, # For segmentation logic
+                max_filter_window=1, 
+                ready_flag=vad_ready, 
+                speech_start_flag=speech_start, 
+                speech_end_flag=speech_end
+            )
 
+            # Create Microphone process
+            # TODO: Add sound_device parameter if needed for Microphone
             mic = Microphone(audio_chunks)
+            
+            # Create Monitor process
             mon = StartEndMonitor(speech_start, speech_end)
 
+            # Start processes
+            self.logger.info("Starting VAD, ASR, Monitor, and Microphone processes...")
             vad.start()
             asr.start()
             mon.start()
 
+            # Wait for VAD and ASR to be ready
+            self.logger.info("Waiting for VAD and ASR processes to become ready...")
             vad_ready.wait()
+            self.logger.info("VAD process ready.")
             asr_ready.wait()
+            self.logger.info("ASR process ready.")
 
+            # Start microphone after dependent processes are ready
             mic.start()
+            self.logger.info("Microphone process started. System running.")
+            
+            # --- Main Loop: Process ASR results --- 
             while True:
-                direction = adjust_angle(self.r_mic.direction)
-                self.get_logger().info("Direction %d" % (direction))
+                # Get processed ASR results from the ASR process queue
                 item = output_queue.get()
-                embeddings = item["embeddings"]
-                if embeddings is not None and item['person_talking'] != 'unknown':
-                        self.publish_embedding(item['person_talking'],embeddings.tolist())
-                if item["intended_audience"] == "shimmy":
-                    
-                    if embeddings is not None and item['person_talking'] == 'unknown':
+                self.logger.debug(f"Received item from ASR queue: {item.get('chat_text', 'N/A')[:50]}...")
+                
+                # Get current mic direction (handle potential errors)
+                try:
+                    direction = adjust_angle(self.r_mic.direction) if self.r_mic else -1
+                except Exception as mic_err:
+                     self.logger.warn(f"Could not get mic direction in main loop: {mic_err}")
+                     direction = -1 # Indicate error/unknown direction
+                # self.logger.debug(f"Current Mic Direction: {direction}")
+
+                embeddings = item.get("embeddings") # Use .get for safety
+                person_talking = item.get("person_talking", "unknown")
+                intended_audience = item.get("intended_audience")
+                chat_text = item.get("chat_text", "")
+                
+                # Publish speaker embeddings if available and speaker is known
+                if embeddings is not None and person_talking != 'unknown':
+                        # Convert embeddings to list of floats BEFORE publishing
                         try:
-                            result = self.send_request(embeddings.tolist())
-                            emb = result.embeddings[0]
-                            metadata = json.loads(emb.metadata)
-                            person  = metadata["name"]
-                            distance = emb.distance
-                            self.get_logger().info("Checking %s match is %d" %(person,distance))
-                            if distance < 850:
-                                item["person_talking"] = person
+                             if hasattr(embeddings, 'tolist'): # Check if it has a tolist() method (like numpy/torch arrays)
+                                 emb_list_for_pub = embeddings.tolist()
+                             elif isinstance(embeddings, (list, tuple)):
+                                 # Check if elements are already floats, otherwise convert
+                                 emb_list_for_pub = [float(e) for e in embeddings]
+                             else:
+                                 self.logger.warn(f"Unsupported embedding type for publishing: {type(embeddings)}")
+                                 emb_list_for_pub = None
+                             
+                             if emb_list_for_pub:
+                                  # Assuming embeddings is already a list here, if not: .tolist()
+                                  self.publish_embedding(person_talking, emb_list_for_pub)
+                        except Exception as pub_emb_err:
+                             self.logger.error(f"Error converting/publishing embedding: {pub_emb_err}")
+                             self.logger.error('%s' % traceback.format_exc())
+                
+                # Check if intended audience is Shimmy
+                if intended_audience == "shimmy":
+                    # If speaker is unknown, try to identify via embeddings
+                    if embeddings is not None and person_talking == 'unknown':
+                        try:
+                            # Ensure embeddings are in the correct format (list) for FAISS service
+                            emb_list_for_faiss = embeddings if isinstance(embeddings, list) else embeddings.tolist()
+                            result = self.send_request(emb_list_for_faiss)
+                            if result and result.embeddings: # Check if result and embeddings exist
+                                emb = result.embeddings[0]
+                                metadata = json.loads(emb.metadata)
+                                identified_person  = metadata.get("name", "unknown")
+                                distance = emb.distance
+                                self.logger.info(f"Embedding Check: Closest match={identified_person}, distance={distance}")
+                                # TODO: Make distance threshold configurable?
+                                if distance < 850:
+                                    person_talking = identified_person # Update person_talking
+                                    self.logger.info(f"Speaker identified as {person_talking} via embedding.")
+                            else:
+                                 self.logger.warn("FAISS service returned no embeddings.")
                         except Exception as e:
-                            print(f"Error extracting embeddings: {e}")
-                            embeddings = None 
+                            self.logger.error(f"Error calling FAISS service: {e}")
+                            self.logger.error('%s' % traceback.format_exc())
+                            # Keep person_talking as 'unknown'
+                            
+                    # Publish the final Chat message
                     msg = Chat()
-                    msg.chat_text = item["chat_text"]
-                    msg.tone = item["tone"]
-                    msg.num_of_persons = int(item["number_of_persons"])
-                    msg.adjacency_pairs = bool(item["adjacency_pairs"])
+                    msg.chat_text = chat_text
+                    msg.tone = item.get("tone", "")
+                    msg.num_of_persons = int(item.get("number_of_persons", -1))
+                    msg.adjacency_pairs = bool(item.get("adjacency_pairs", False))
                     msg.direction = direction
-                    msg.person = item["person_talking"]
-                    msg.stop_talking = item["stop_talking"]
+                    msg.person = person_talking # Use potentially updated name
+                    msg.stop_talking = bool(item.get("stop_talking", False))
+                    # Ensure voice_prob exists if needed downstream, otherwise default to 0.0
+                    # msg.voice_prob = float(item.get("voice_prob", 0.0)) # VAD prob is now on separate topic
+                    
                     self.publisher_.publish(msg)
-                    self.get_logger().info(f'Publishing: {msg.chat_text} adj:{msg.adjacency_pairs} tone:{msg.tone} num_persons:{msg.num_of_persons}')
-        except:
-            self.get_logger().error('%s' % traceback.format_exc())
-        
-        
+                    self.logger.info(f'Published ASR: person={msg.person}, adj={msg.adjacency_pairs}, text="{msg.chat_text[:50]}..."')
+                else:
+                    # Log messages not intended for Shimmy (optional)
+                    self.logger.debug(f"ASR message from {person_talking} not intended for Shimmy: '{chat_text[:50]}...'")
+
+        except Exception as main_loop_err:
+            self.logger.error(f'Fatal error in GEMINI ASR lworker thread: {main_loop_err}')
+            self.logger.error('%s' % traceback.format_exc())
+            # Consider adding cleanup or shutdown logic here
+            
 
 
 def main(args=None):

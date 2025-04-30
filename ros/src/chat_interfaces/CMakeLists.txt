@@ -25,6 +25,7 @@ endif()
 
 find_package(rosidl_default_generators REQUIRED)
 find_package(sensor_msgs REQUIRED)
+find_package(std_msgs REQUIRED)
 rosidl_generate_interfaces(${PROJECT_NAME}
   "msg/Chat.msg"
   "msg/PowerUsage.msg"
@@ -33,12 +34,16 @@ rosidl_generate_interfaces(${PROJECT_NAME}
   "msg/LedColor.msg"
   "msg/LedPattern.msg"
   "msg/PaintLedColor.msg"
+  "msg/VadAudio.msg"
+  "msg/ProcessedSpeech.msg"
+  "msg/AudioChunk.msg"
   "srv/SaySomething.srv"
   "srv/GetImage.srv"
   "srv/GetPower.srv"
   "srv/GetPose.srv"
   DEPENDENCIES 
   sensor_msgs
+  std_msgs
 )
 
 ament_package()

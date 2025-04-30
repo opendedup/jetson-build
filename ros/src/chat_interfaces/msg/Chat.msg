@@ -6,3 +6,4 @@ int16 num_of_persons
 bool adjacency_pairs
 string person
 bool stop_talking
+float32 voice_prob # Voice activity detection probability

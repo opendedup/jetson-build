@@ -1,0 +1,19 @@
+# Parameters for audio_interface_node
+audio_interface_node:
+  ros__parameters:
+    input_device: "echo_cancel_source" # Using PulseAudio AEC source
+    output_device: "echo_cancel_sink" # Using PulseAudio AEC sink
+    input_sample_rate: 32000    # MUST MATCH PulseAudio AEC module's rate (usually 32kHz)
+    output_sample_rate: 32000   # MUST MATCH PulseAudio AEC module's rate (usually 32kHz)
+    output_volume: 0.5          # Initial output volume (0.0 to 1.0)
+    channels: 1                 # PulseAudio AEC module is likely mono
+    vad_threshold: 0.8          # Original VAD threshold
+    vad_chunk_samples: 1536     # May need tuning for 32kHz
+    vad_silence_ms: 500         # Adjusted silence duration
+    vad_padding_ms: 200
+    # vad_threshold_playback_multiplier: 1.1 # No longer needed with system AEC
+
+# Parameters for speech_processor_node
+speech_processor_node:
+  ros__parameters:
+    tts_sample_rate: 44100      # TTS node generates at its preferred rate 

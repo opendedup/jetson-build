@@ -1,6 +1,7 @@
 import rclpy
 from rclpy.node import Node
 from chat_interfaces.msg import Chat
+from rclpy.publisher import Publisher
 
 import traceback
 
@@ -18,8 +19,9 @@ from dataclasses import dataclass
 from contextlib import contextmanager
 from typing import Optional
 from whisper_trt.vad import load_vad
-from .utils import find_audio_device_index
+from .utils import find_audio_device_index, adjust_angle
 from .usb_4_mic_array import Tuning
+import usb.core
 
 
 def find_respeaker_audio_device_index():
@@ -141,13 +143,18 @@ class Microphone(Process):
 class VAD(Process):
 
     def __init__(self,
-            input_queue: Queue, 
+            input_queue: Queue,
             output_queue: Queue,
+            vad_publisher: Publisher,
+            node_logger,
+            vad_threshold: float,
+            vad_publish_interval: float,
+            r_mic_tuning: Tuning,
             sample_rate: int = 16000,
             use_channel: int = 0,
             speech_threshold: float = 0.6,
             max_filter_window: int = 1,
-            trailing_silence_frames: int = 4,  # Number of silent frames to detect end of speech
+            trailing_silence_frames: int = 4,
             ready_flag = None,
             speech_start_flag = None,
             speech_end_flag = None):
@@ -162,58 +169,97 @@ class VAD(Process):
         self.ready_flag = ready_flag
         self.speech_start_flag = speech_start_flag
         self.speech_end_flag = speech_end_flag
+        self.vad_publisher = vad_publisher
+        self.node_logger = node_logger
+        self.realtime_vad_threshold = vad_threshold
+        self.vad_publish_interval = vad_publish_interval
+        self.r_mic = r_mic_tuning
 
     def run(self):
+        try:
+            self.node_logger.info("VAD Process started.")
+            vad = load_vad()
+            vad(np.zeros(1536, dtype=np.float32), sr=self.sample_rate)
+            self.node_logger.info("VAD model loaded and warmed up.")
 
-        vad = load_vad()
-        # warmup run
-        vad(np.zeros(1536, dtype=np.float32), sr=self.sample_rate)
-        
+            max_filter_window = deque(maxlen=self.max_filter_window)
+            speech_chunks = []
+            prev_is_voice = False
+            silent_frame_count = 0
+            last_publish_time = 0
 
-        max_filter_window = deque(maxlen=self.max_filter_window)
+            if self.ready_flag is not None:
+                self.ready_flag.set()
+                self.node_logger.info("VAD Process ready flag set.")
 
-        speech_chunks = []
+            while True:
+                try:
+                    audio_chunk_obj = self.input_queue.get()
 
-        prev_is_voice = False
-        silent_frame_count = 0 
+                    channel_to_use = self.use_channel
+                    if audio_chunk_obj.audio_numpy_normalized.ndim > 1:
+                         vad_input = audio_chunk_obj.audio_numpy_normalized[channel_to_use]
+                    else:
+                         vad_input = audio_chunk_obj.audio_numpy_normalized
 
-        if self.ready_flag is not None:
-            self.ready_flag.set()
+                    voice_prob = float(vad(vad_input, sr=self.sample_rate).flatten()[0])
 
-        while True:
-            
+                    current_time = time.time()
+                    if (current_time - last_publish_time >= self.vad_publish_interval):
+                        vad_msg = Chat()
+                        vad_msg.chat_text = ""
+                        vad_msg.person = "unknown"
+                        vad_msg.voice_prob = voice_prob
+                        try:
+                            vad_msg.direction = adjust_angle(self.r_mic.direction)
+                        except Exception as mic_err:
+                             self.node_logger.warn(f"Could not get mic direction: {mic_err}")
+                             vad_msg.direction = -1
 
-            audio_chunk = self.input_queue.get()
-            #print(f"""input_queue={self.input_queue.qsize()}""")
+                        self.vad_publisher.publish(vad_msg)
+                        last_publish_time = current_time
+                        log_level = self.node_logger.info if voice_prob >= self.realtime_vad_threshold else self.node_logger.debug
+                        log_level(f"[VAD Process] Published VAD message: prob={voice_prob:.2f}")
 
-            voice_prob = float(vad(audio_chunk.audio_numpy_normalized[self.use_channel], sr=self.sample_rate).flatten()[0])
-            chunk = AudioChunk(
-                audio_raw=audio_chunk.audio_raw,
-                audio_numpy=audio_chunk.audio_numpy,
-                audio_numpy_normalized=audio_chunk.audio_numpy_normalized,
-                voice_prob=voice_prob
-            )
+                    chunk = AudioChunk(
+                        audio_raw=audio_chunk_obj.audio_raw,
+                        audio_numpy=audio_chunk_obj.audio_numpy,
+                        audio_numpy_normalized=audio_chunk_obj.audio_numpy_normalized,
+                        voice_prob=voice_prob
+                    )
 
-            max_filter_window.append(chunk)
+                    max_filter_window.append(chunk)
+                    is_voice_for_segmentation = any(c.voice_prob > self.speech_threshold for c in max_filter_window)
 
-            is_voice = any(c.voice_prob > self.speech_threshold for c in max_filter_window)
-            
-            if is_voice:
-                speech_chunks.append(chunk)
-                silent_frame_count = 0  # Reset silent frame count if voice is detected
-                if self.speech_start_flag is not None and not prev_is_voice:
-                    self.speech_start_flag.set()
-            else:
-                if speech_chunks: # if speech_chunks is not empty
-                    silent_frame_count += 1
-                    if silent_frame_count >= self.trailing_silence_frames:
-                        segment = AudioSegment(chunks=speech_chunks)
-                        self.output_queue.put(segment)
-                        if self.speech_end_flag is not None:
-                            self.speech_end_flag.set()
-                        speech_chunks = []
+                    if is_voice_for_segmentation:
+                        speech_chunks.append(chunk)
                         silent_frame_count = 0
-            prev_is_voice = is_voice
+                        if self.speech_start_flag is not None and not prev_is_voice:
+                            self.speech_start_flag.set()
+                            self.node_logger.debug("[VAD Process] Speech Start Flag Set.")
+                    else:
+                        if speech_chunks:
+                            silent_frame_count += 1
+                            if silent_frame_count >= self.trailing_silence_frames:
+                                segment = AudioSegment(chunks=speech_chunks)
+                                self.output_queue.put(segment)
+                                if self.speech_end_flag is not None:
+                                    self.speech_end_flag.set()
+                                    self.node_logger.debug("[VAD Process] Speech End Flag Set.")
+                                speech_chunks = []
+                                silent_frame_count = 0
+                                self.node_logger.debug("[VAD Process] Speech segment sent to ASR.")
+
+                    prev_is_voice = is_voice_for_segmentation
+
+                except Exception as loop_err:
+                    self.node_logger.error(f"Error in VAD Process loop: {loop_err}")
+                    self.node_logger.error('%s' % traceback.format_exc())
+                    time.sleep(0.1)
+
+        except Exception as run_err:
+            self.node_logger.error(f"Fatal error starting VAD Process: {run_err}")
+            self.node_logger.error('%s' % traceback.format_exc())
 
 
 class StartEndMonitor(Process):
@@ -227,7 +273,5 @@ class StartEndMonitor(Process):
         while True:
             self.start_flag.wait()
             self.start_flag.clear()
-            #self.get_logger().debug(f"Speech started.")
             self.end_flag.wait()
             self.end_flag.clear()
-            #self.get_logger().debug(f"Speech ended.")

@@ -10,16 +10,15 @@ from std_msgs.msg import (Float64, Bool)
 import math
 import numpy as np
 
-import vertexai.preview.generative_models as generative_models
-from vertexai.preview.generative_models import FunctionDeclaration
-from vertexai.generative_models import (
-    GenerativeModel,
-    Part,
-    Tool,
-    ToolConfig
-)
+
 from std_srvs.srv import Empty
 from chat_interfaces.srv import GetPose
+
+from google import genai
+from google.genai import types
+
+import logging
+from logging.handlers import RotatingFileHandler
 
 class ShimmyMoveClientAsync(Node):
 
@@ -31,24 +30,43 @@ class ShimmyMoveClientAsync(Node):
         self.shimmy_cancel_publisher = self.create_publisher(Bool, f'{namespace}/cancel_move', 10)
         self.zed_cli = self.create_client(Trigger, "/zed/zed_node/reset_pos_tracking")
         self.rtab_cli = self.create_client(Empty, "/rtabmap/reset")
-        self.nav_tool = Tool(
-            function_declarations=[move_shimmy_func],
+        self.nav_model ="gemini-2.5-pro-preview-03-25"
+        self.nav_config = types.GenerateContentConfig(
+            max_output_tokens=8192,
+            temperature=1.0, # Use float
+            top_p=0.95,
+            response_modalities = ["TEXT"],
+            safety_settings = [types.SafetySetting(
+            category="HARM_CATEGORY_HATE_SPEECH",
+            threshold="OFF"
+            ),types.SafetySetting(
+            category="HARM_CATEGORY_DANGEROUS_CONTENT",
+            threshold="OFF"
+            ),types.SafetySetting(
+            category="HARM_CATEGORY_SEXUALLY_EXPLICIT",
+            threshold="OFF"
+            ),types.SafetySetting(
+            category="HARM_CATEGORY_HARASSMENT",
+            threshold="OFF"
+            )],
+            tools=[types.Tool(function_declarations=[move_shimmy_func])],
+            #system_instruction=[types.Part.from_text(text=bounding_box_instructions)],
         )
-        self.nav_model = GenerativeModel(
-            "gemini-1.5-pro-001"
-        )
-        self.config = {
-            "max_output_tokens": 8192,
-            "temperature": 0,
-            "top_p": 0.95,
-        }
-        self.safety_settings = {
-            generative_models.HarmCategory.HARM_CATEGORY_HATE_SPEECH: generative_models.HarmBlockThreshold.BLOCK_NONE,
-            generative_models.HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT: generative_models.HarmBlockThreshold.BLOCK_NONE,
-            generative_models.HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT: generative_models.HarmBlockThreshold.BLOCK_NONE,
-            generative_models.HarmCategory.HARM_CATEGORY_HARASSMENT: generative_models.HarmBlockThreshold.BLOCK_NONE,
-        }
         self.pos_cli = self.create_client(GetPose, f"{namespace}/get_pose")
+        try:
+            project_id = "lemmingsinthewind"
+            location = "us-central1"
+            # Initialize client using genai.Client for Vertex
+            self.client = genai.Client(vertexai=True, project=project_id, location=location)
+            logging.info(f"Using google-genai client with Vertex AI backend (Project: {project_id}, Location: {location})")
+        except KeyError as e:
+            logging.error(f"Missing environment variable for Vertex AI: {e}. Please set GOOGLE_CLOUD_PROJECT and GOOGLE_CLOUD_LOCATION.")
+            self.client = None # Indicate client initialization failed
+            raise EnvironmentError(f"Missing required environment variable for Vertex AI: {e}") from e
+        except Exception as e:
+             logging.error(f"Failed to initialize genai.Client for Vertex AI: {e}")
+             self.client = None # Indicate client initialization failed
+             raise RuntimeError(f"Failed to initialize genai.Client: {e}") from e
         
         
     
@@ -100,20 +118,14 @@ class ShimmyMoveClientAsync(Node):
     
     def publish_pose(self,command):
         self.get_logger().info("processing move command %s" % (command))
-        response = self.nav_model.generate_content(
-            command,
-            stream=False, 
-            safety_settings=self.safety_settings,
-            generation_config=self.config,
-            tools=[self.nav_tool],
-            tool_config=ToolConfig(
-                function_calling_config=ToolConfig.FunctionCallingConfig(
-                    # ANY mode forces the model to predict a function call
-                    mode=ToolConfig.FunctionCallingConfig.Mode.ANY,
-            ))
+        response = self.client.models.generate_content(
+            model=self.nav_model,
+            contents=[command],
+            config=self.nav_config,
         )
-        function_call = response.candidates[0].content.parts[0].function_call
-
+        logging.info(response)
+        function_call = response.function_calls[0]
+        logging.info(function_call)
         # Extract parameters from the function call
         forward_distance = function_call.args.get("forward_distance", 0)
         right_distance = function_call.args.get("right_distance", 0)
@@ -235,7 +247,7 @@ def calculate_goal_pose(current_pose, forward_distance=0, right_distance=0, rota
 
     return target_pose
 
-move_shimmy_func = FunctionDeclaration(
+move_shimmy_func = types.FunctionDeclaration(
     name="move_shimmy",
     description="""
     Calculate the target pose for the robot based on a natural language command 

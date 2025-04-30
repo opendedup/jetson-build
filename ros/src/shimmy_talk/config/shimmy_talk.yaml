@@ -3,12 +3,17 @@ asr_listener:
     sound_device: "M12i Mobile"
     train_voice: false
     train_voice_name: 'unknow'
+    stop_on_vad: true  # Enable stopping when VAD detects user speaking
+    vad_threshold: 0.6  # VAD threshold for stopping speech (used by listener)
 # m_service:
 #   ros__parameters:
 #     serial_device: "/dev/ttyACM"
 riva_asr:
   ros__parameters:
     sound_device: "respeaker"
+    vad_threshold: 0.6  # Voice activity detection threshold (used by VAD process)
+    vad_publish_interval: 0.1  # How often to publish VAD updates (seconds)
+    vad_segmentation_threshold: 0.6 # Threshold for deciding speech segment ends
     
 
 

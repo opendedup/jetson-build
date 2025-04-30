@@ -1,39 +1,27 @@
-from noaa_sdk import NOAA
+import traceback
 from datetime import datetime
 import json
+import os # Added import for environment variables
 
-import vertexai
+from google import genai
+from google.genai import types # types contains Part, FunctionDeclaration, etc.
 
-from vertexai.preview.generative_models import (
-    grounding,
-    Part,
-    Tool,
-    FunctionDeclaration,
-)
 
-import pytz 
-import traceback
 import logging
 import sys
+
+import pytz
 from .image_client import ImageClientAsync
 from .shimmy_system_notifier_client import ShimmySystemNotifierAsync
 from .microcontroller_client import MicroControllerClientAsync
 from .shimmy_move_client import ShimmyMoveClientAsync
 
-import io
-import PIL.Image as Image
-from cv_bridge import CvBridge
-import numpy as np
-import uuid
+
 logging.basicConfig(level=logging.INFO, stream=sys.stderr)
 
 
-from vertexai.generative_models import (
-    GenerativeModel,
-    Part,
-    Tool
-)
-import vertexai.preview.generative_models as generative_models
+# Removed imports from vertexai.generative_models
+# import vertexai.preview.generative_models as generative_models 
 import re
 
 
@@ -44,16 +32,47 @@ class AgentRunner:
         self.microcontroller_client = MicroControllerClientAsync()
         self.shimmy_move_client = ShimmyMoveClientAsync()
         self.state_notifier = ShimmySystemNotifierAsync()
-        vertexai.init(project="lemmingsinthewind", location="us-central1")
-        tools = [
-            Tool.from_google_search_retrieval(
-                google_search_retrieval=generative_models.grounding.GoogleSearchRetrieval()
-            ),
-        ]
-        self.wbmodel = GenerativeModel(
-            "gemini-1.5-pro-002",
-            tools=tools,
-            system_instruction=["""You are a world-class research agent, adept at using Google Search to find comprehensive and detailed information on any topic. Your goal is to provide the most informative and insightful answers possible.
+        # --- Refactored Client Initialization for Vertex AI ---
+        # Remove the incorrect genai.configure line
+        # genai.configure(api_key=os.environ.get("GOOGLE_API_KEY", "YOUR_API_KEY")) 
+
+        # Configure client to use Vertex AI backend
+        # Assumes GOOGLE_CLOUD_PROJECT and GOOGLE_CLOUD_LOCATION are set as environment variables
+        try:
+            project_id = "lemmingsinthewind"
+            location = "us-central1"
+            # Initialize client using genai.Client for Vertex
+            self.client = genai.Client(vertexai=True, project=project_id, location=location)
+            logging.info(f"Using google-genai client with Vertex AI backend (Project: {project_id}, Location: {location})")
+        except KeyError as e:
+            logging.error(f"Missing environment variable for Vertex AI: {e}. Please set GOOGLE_CLOUD_PROJECT and GOOGLE_CLOUD_LOCATION.")
+            self.client = None # Indicate client initialization failed
+            raise EnvironmentError(f"Missing required environment variable for Vertex AI: {e}") from e
+        except Exception as e:
+             logging.error(f"Failed to initialize genai.Client for Vertex AI: {e}")
+             self.client = None # Indicate client initialization failed
+             raise RuntimeError(f"Failed to initialize genai.Client: {e}") from e
+
+        # --- Web Search / Grounding Tool Section ---
+        # Tool.from_google_search_retrieval and types.Grounding are not the correct way
+        # to configure grounding with genai.Client, even for Vertex backend.
+        # Remove the incompatible tool definition:
+        # tools = [
+        #     types.Tool.from_google_search_retrieval(
+        #         google_search_retrieval=types.Grounding.GoogleSearchRetrieval()
+        #     ),
+        # ]
+        # TODO: Implement web search/grounding. If using Vertex grounding features,
+        # configure it via the appropriate parameters in client.models.generate_content calls,
+        # or implement using external search APIs.
+
+        # Comment out wbmodel as its tool setup was incorrect. Re-evaluate if needed with correct grounding setup.
+        # self.wbmodel = genai.GenerativeModel(
+        #     "gemini-1.5-pro-002", # Use appropriate Vertex model name if different
+        #     # tools= ..., # Pass correctly configured tools if needed
+        #     system_instruction=["""You are a world-class research agent... (rest of instruction)"""]
+        # )
+        system_instruction="""You are a world-class research agent, adept at using Google Search to find comprehensive and detailed information on any topic. Your goal is to provide the most informative and insightful answers possible.
 
 When responding to a query:
 
@@ -62,173 +81,206 @@ When responding to a query:
 3. **Depth and Detail:** Prioritize providing as much relevant detail as possible, within a reasonable length.
 4. **Accurate Attribution:** Clearly cite all sources you use in your responses using footnotes.
 
-You will be provided with a user's query as input. Your task is to provide a detailed and well-researched response."""] 
-        )
-        self.config = {
-            "max_output_tokens": 8192,
-            "temperature": 1,
-            "top_p": 0.95,
-        }
-        self.safety_settings = {
-            generative_models.HarmCategory.HARM_CATEGORY_HATE_SPEECH: generative_models.HarmBlockThreshold.BLOCK_NONE,
-            generative_models.HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT: generative_models.HarmBlockThreshold.BLOCK_NONE,
-            generative_models.HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT: generative_models.HarmBlockThreshold.BLOCK_NONE,
-            generative_models.HarmCategory.HARM_CATEGORY_HARASSMENT: generative_models.HarmBlockThreshold.BLOCK_NONE,
-        }
+You will be provided with a user's query as input. Your task is to provide a detailed and well-researched response."""
+        
+        tools = [
+            types.Tool(google_search=types.GoogleSearch()),
+        ]
 
-    def add_voice(self,person,embedding,training=False):
+        self.config = types.GenerateContentConfig( # Use types.GenerationConfig
+            max_output_tokens=8192,
+            temperature=1.0, # Use float
+            top_p=0.95,
+            response_modalities = ["TEXT"],
+            safety_settings = [types.SafetySetting(
+            category="HARM_CATEGORY_HATE_SPEECH",
+            threshold="OFF"
+            ),types.SafetySetting(
+            category="HARM_CATEGORY_DANGEROUS_CONTENT",
+            threshold="OFF"
+            ),types.SafetySetting(
+            category="HARM_CATEGORY_SEXUALLY_EXPLICIT",
+            threshold="OFF"
+            ),types.SafetySetting(
+            category="HARM_CATEGORY_HARASSMENT",
+            threshold="OFF"
+            )],
+            tools = tools,
+            system_instruction=[types.Part.from_text(text=system_instruction)],
+        )
+        
+        # You might want a reference to a model name for generate_content calls
+        self.model_name = "gemini-2.5-flash-preview-04-17" # Adjust model name as needed for Vertex
+        
+    def add_voice(self, person, embedding, training=False):
+        if not self.client: raise RuntimeError("Agent client not initialized.") # Check client
         try:
-            
             if person == "unknown" and training is False:
-                part = Part.from_function_response(
-                name="remember_voice",
-                response={
-                    "content": {"error":"person is unknow. Tell us who you are first. Say something like \"Hey Shimmy, My name is Cindy. Remember my voice.\""},
-                },
+                part = types.Part.from_function_response(
+                    name="remember_voice",
+                    response={
+                        "content": {"error":"person is unknown. Tell us who you are first. Say something like \"Hey Shimmy, My name is Cindy. Remember my voice.\""},
+                    }
                 )
             else:
-                self.voice_emb_client.publish_embedding(person,embedding)
-                part = Part.from_function_response(
+                # self.voice_emb_client.publish_embedding(person,embedding) # Assuming this client is still valid
+                part = types.Part.from_function_response(
                     name="remember_voice",
                     response={
                         "content": {"user_name":person},
-                    },
+                    }
                 )
-        except:
-            logging.error(traceback.format_exc()) 
-            part = Part.from_function_response(
-                name="store_voice",
+        except Exception as e:
+            logging.error(f"Error in add_voice: {traceback.format_exc()}")
+            part = types.Part.from_function_response(
+                name="remember_voice", # Return error under the expected function name
                 response={
-                    "content": {"error":"cannot store voices at this time"},
-                },
+                    "content": {"error": f"cannot store voice at this time: {e}"},
+                }
             )
         return part
     
     def change_led_color(self,red,green,blue):
+        if not self.client: raise RuntimeError("Agent client not initialized.") # Check client
         try:
-            self.microcontroller_client.publish_ledcolor(red,green,blue)
-            part = Part.from_function_response(
+            # Ensure types are integers
+            red, green, blue = int(red), int(green), int(blue)
+            self.microcontroller_client.publish_ledcolor(red, green, blue)
+            part = types.Part.from_function_response(
                 name="change_led_color",
                 response={
                     "content": {"status":"done"},
-                },
+                }
             )
-        except:
-            logging.error(traceback.format_exc()) 
-            part = Part.from_function_response(
+        except Exception as e:
+            logging.error(f"Error in change_led_color: {traceback.format_exc()}")
+            part = types.Part.from_function_response(
                 name="change_led_color",
                 response={
-                    "content": {"error":"cannot change color at this time"},
-                },
+                    "content": {"error":f"cannot change color at this time: {e}"},
+                }
             )
         return part
     
     def change_brightness(self,brightness):
+        if not self.client: raise RuntimeError("Agent client not initialized.") # Check client
         try:
+            brightness = int(brightness) # Ensure type
             self.microcontroller_client.publish_ledbrightness(brightness)
-            part = Part.from_function_response(
+            part = types.Part.from_function_response(
                 name="change_brightness",
                 response={
                     "content": {"status":"done"},
-                },
+                }
             )
-        except:
-            logging.error(traceback.format_exc()) 
-            part = Part.from_function_response(
+        except Exception as e:
+            logging.error(f"Error in change_brightness: {traceback.format_exc()}")
+            part = types.Part.from_function_response(
                 name="change_brightness",
                 response={
-                    "content": {"error":"cannot change color at this time"},
-                },
+                    "content": {"error":f"cannot change brightness at this time: {e}"},
+                }
             )
         return part
     
     def move_shimmy(self,command):
+        if not self.client: raise RuntimeError("Agent client not initialized.") # Check client
         try:
             self.state_notifier.publish_status('Give me a few seconds while I figure out how to chart my path.')
-            self.shimmy_move_client.publish_pose(command)
-            part = Part.from_function_response(
+            self.shimmy_move_client.publish_pose(str(command)) # Ensure command is string
+            part = types.Part.from_function_response(
                 name="move_shimmy",
                 response={
                     "content": {"status":"starting to move."},
-                },
+                }
             )
             
-        except:
-            logging.error(traceback.format_exc()) 
-            part = Part.from_function_response(
+        except Exception as e:
+            logging.error(f"Error in move_shimmy: {traceback.format_exc()}")
+            part = types.Part.from_function_response(
                 name="move_shimmy",
                 response={
-                    "content": {"error":"cannot move robot. "},
-                },
+                    "content": {"error":f"cannot move robot: {e}"},
+                }
             )
         return part
     
     def turn_shimmy(self,radians):
+        if not self.client: raise RuntimeError("Agent client not initialized.") # Check client
         try:
+            radians = float(radians) # Ensure type
             self.shimmy_move_client.publish_turn(radians)
-            part = Part.from_function_response(
+            part = types.Part.from_function_response(
                 name="turn_inplace",
                 response={
                     "content": {"status":"starting to turn"},
-                },
+                }
             )
-        except:
-            logging.error(traceback.format_exc()) 
-            part = Part.from_function_response(
+        except Exception as e:
+            logging.error(f"Error in turn_shimmy: {traceback.format_exc()}")
+            part = types.Part.from_function_response(
                 name="turn_inplace",
                 response={
-                    "content": {"error":"cannot turn robot."},
-                },
+                    "content": {"error":f"cannot turn robot: {e}"},
+                }
             )
         return part
             
     
     def change_led_pattern(self,pattern):
+        if not self.client: raise RuntimeError("Agent client not initialized.") # Check client
         try:
-            self.microcontroller_client.publish_ledpattern(pattern)
-            part = Part.from_function_response(
+            self.microcontroller_client.publish_ledpattern(str(pattern)) # Ensure type
+            part = types.Part.from_function_response(
                 name="change_led_pattern",
                 response={
                     "content": {"status":"done"},
-                },
+                }
             )
-        except:
-            logging.error(traceback.format_exc()) 
-            part = Part.from_function_response(
+        except Exception as e:
+            logging.error(f"Error in change_led_pattern: {traceback.format_exc()}")
+            part = types.Part.from_function_response(
                 name="change_led_pattern",
                 response={
-                    "content": {"error":"cannot change color at this time"},
-                },
+                    "content": {"error":f"cannot change led pattern at this time: {e}"},
+                }
             )
         return part
     
     def get_power(self):
+        if not self.client: raise RuntimeError("Agent client not initialized.") # Check client
         try:
-            response = self.microcontroller_client.send_power_request()
-            part = Part.from_function_response(
+            # Assuming send_power_request returns an object with .powerusage
+            mcu_response = self.microcontroller_client.send_power_request()
+            power_info = mcu_response.powerusage # Check attribute name
+            part = types.Part.from_function_response(
                 name="get_power",
                 response={
-                    "content": {"voltage":response.powerusage.loadvoltage,
-                                "current_milli_amps": response.powerusage.currentma,
-                                "milli_watts":response.powerusage.powermw
+                    "content": {"voltage": power_info.loadvoltage,
+                                "current_milli_amps": power_info.currentma,
+                                "milli_watts": power_info.powermw
                                 },
-                },
+                }
             )
-        except:
-            logging.error(traceback.format_exc()) 
-            part = Part.from_function_response(
+        except AttributeError as ae:
+             logging.error(f"Attribute error accessing power info: {ae} - Check response structure. Traceback: {traceback.format_exc()}")
+             part = types.Part.from_function_response(name="get_power", response={"content": {"error":f"Internal error accessing power data: {ae}"}})
+        except Exception as e:
+            logging.error(f"Error in get_power: {traceback.format_exc()}")
+            part = types.Part.from_function_response(
                 name="get_power",
                 response={
-                    "content": {"error":"cannot get power at this time"},
-                },
+                    "content": {"error":f"cannot get power at this time: {e}"},
+                }
             )
         return part
 
     def get_image(self,text_req):
+        if not self.client: raise RuntimeError("Agent client not initialized.") # Check client
         try:
             self.state_notifier.publish_status('Give me a few seconds while I use my eyes.')
             rtxt = self.image_client.get_image(text_req)
-            part = Part.from_function_response(
+            part = types.Part.from_function_response( # Uses Part from google.generativeai.types
                 name="use_robot_eyes",
                 response={
                     "content": {"description":rtxt},
@@ -237,7 +289,7 @@ You will be provided with a user's query as input. Your task is to provide a det
             
         except:
             logging.error(traceback.format_exc()) 
-            part = Part.from_function_response(
+            part = types.Part.from_function_response( # Uses Part from google.generativeai.types
                 name="use_robot_eyes",
                 response={
                     "content": {"error":"cannot get image info at this time"},
@@ -245,6 +297,7 @@ You will be provided with a user's query as input. Your task is to provide a det
             )
         return part
     def find_object(self,text_req,additional_context=""):
+        if not self.client: raise RuntimeError("Agent client not initialized.") # Check client
         try:
             self.state_notifier.publish_status(f'Give me a moment while I use my eyes to find {text_req} .')
             rtxt,_,_ = self.image_client.get_bounding_box(text_req,additional_context)
@@ -252,7 +305,7 @@ You will be provided with a user's query as input. Your task is to provide a det
             if rtxt[0] > 0:
                 direction = "right"
             print(rtxt)
-            part = Part.from_function_response(
+            part = types.Part.from_function_response( # Uses Part from google.generativeai.types
                 name="find_object_with_eyes",
                 response={
                     "content": {"description":f"{text_req} found about {rtxt[2]} meters in front and {abs(rtxt[0])} meters to the {direction}."}
@@ -261,7 +314,7 @@ You will be provided with a user's query as input. Your task is to provide a det
             
         except:
             logging.error(traceback.format_exc()) 
-            part = Part.from_function_response(
+            part = types.Part.from_function_response( # Uses Part from google.generativeai.types
                 name="find_object_with_eyes",
                 response={
                     "content": {"error":"cannot get image info at this time"},
@@ -270,6 +323,7 @@ You will be provided with a user's query as input. Your task is to provide a det
         return part
     
     def move_to_object(self,text_req,additional_context="",move_command=""):
+        if not self.client: raise RuntimeError("Agent client not initialized.") # Check client
         try:
             self.state_notifier.publish_status(f'Give me a moment while I use my eyes to find {text_req} .')
             rtxt,obj_coords,_ = self.image_client.get_bounding_box(text_req,additional_context)
@@ -282,7 +336,7 @@ You will be provided with a user's query as input. Your task is to provide a det
             self.shimmy_move_client.publish_pose(f"""Move {rtxt[2]} meters forward and to the {direction} {abs(rtxt[0])} meters.
 """)
             print(rtxt)
-            part = Part.from_function_response(
+            part = types.Part.from_function_response( # Uses Part from google.generativeai.types
                 name="move_to_object_with_wheels",
                 response={
                     "content": {"description":f"{text_req} found about {rtxt[2]} meters in front. Moving to {text_req} but not there yet."},
@@ -291,7 +345,7 @@ You will be provided with a user's query as input. Your task is to provide a det
             
         except:
             logging.error(traceback.format_exc()) 
-            part = Part.from_function_response(
+            part = types.Part.from_function_response( # Uses Part from google.generativeai.types
                 name="move_to_object_with_wheels",
                 response={
                     "content": {"error":"cannot get image info at this time"},
@@ -300,10 +354,11 @@ You will be provided with a user's query as input. Your task is to provide a det
         return part
     
     def cancel_move(self):
+        if not self.client: raise RuntimeError("Agent client not initialized.") # Check client
         try:
            
             self.shimmy_move_client.publish_cancel()
-            part = Part.from_function_response(
+            part = types.Part.from_function_response( # Uses Part from google.generativeai.types
                 name="stop_moving",
                 response={
                     "content": {"description":f"Canceled Move"},
@@ -312,7 +367,7 @@ You will be provided with a user's query as input. Your task is to provide a det
             
         except:
             logging.error(traceback.format_exc()) 
-            part = Part.from_function_response(
+            part = types.Part.from_function_response( # Uses Part from google.generativeai.types
                 name="stop_moving",
                 response={
                     "content": {"error":"Unable to stop moving"},
@@ -320,25 +375,32 @@ You will be provided with a user's query as input. Your task is to provide a det
             )
         return part
     
-    def use_web(self,text_req):
+    def use_web(self,search_txt): # Renamed arg for clarity
+        if not self.client: raise RuntimeError("Agent client not initialized.") # Check client
+        # Needs reimplementation using an external search API or correct Vertex grounding config
         try:
-            self.state_notifier.publish_status(f'Give me a moment while I look that up for you .')
-            response = self.wbmodel.generate_content([text_req],
-                                    generation_config=self.config,stream=False, safety_settings=self.safety_settings)
-            part = Part.from_function_response(
-                name="use_web_browser",
-                response={
-                    "content": {"description":response.text},
-                },
+            self.state_notifier.publish_status(f'Give me a moment while I look up: {search_txt}')
+
+            response = self.client.models.generate_content(
+                model=self.model_name,
+                contents=types.Part.from_text(text=search_txt),
+                config=self.config,
             )
-            
-        except:
-            logging.error(traceback.format_exc()) 
-            part = Part.from_function_response(
+            response_text = response.text
+
+            part = types.Part.from_function_response(
                 name="use_web_browser",
                 response={
-                    "content": {"error":"cannot get image info at this time"},
-                },
+                    "content": {"description": response_text},
+                }
+            )
+        except Exception as e:
+            logging.error(f"Error in use_web placeholder/implementation: {traceback.format_exc()}")
+            part = types.Part.from_function_response(
+                name="use_web_browser",
+                response={
+                    "content": {"error": f"Cannot get web info for '{search_txt}' at this time: {e}"},
+                }
             )
         return part
 
@@ -362,7 +424,7 @@ You will be provided with a user's query as input. Your task is to provide a det
     #         }
     #         self.image_emb_client.publish_embedding(str(uuid.uuid4()),embeddings.image_embedding,map=metadata)
     #         self.image_emb_client.publish_embedding(str(uuid.uuid4()),embeddings.text_embedding,map=metadata)
-    #         part = Part.from_function_response(
+    #         part = types.Part.from_function_response(
     #             name="store_voice",
     #             response={
     #                 "content": {"description":description},
@@ -370,7 +432,7 @@ You will be provided with a user's query as input. Your task is to provide a det
     #         )
     #     except:
     #         logging.error(traceback.format_exc()) 
-    #         part = Part.from_function_response(
+    #         part = types.Part.from_function_response(
     #             name="get_time",
     #             response={
     #                 "content": {"error":"cannot store image descriptions at this time"},
@@ -388,7 +450,7 @@ You will be provided with a user's query as input. Your task is to provide a det
                 now = datetime.now()
             date_time = now.strftime("%m/%d/%Y, %H:%M")
             api_response = {"current_time": date_time, "time_zone": timezone}
-            part = Part.from_function_response(
+            part = types.Part.from_function_response( # Uses Part from google.generativeai.types
                 name="get_time",
                 response={
                     "content": api_response,
@@ -396,7 +458,7 @@ You will be provided with a user's query as input. Your task is to provide a det
             )
         except:
             logging.error(traceback.format_exc()) 
-            part = Part.from_function_response(
+            part = types.Part.from_function_response( # Uses Part from google.generativeai.types
                 name="get_time",
                 response={
                     "content": {"error":"cannot return current time"},
@@ -442,7 +504,7 @@ def convert_string_array_to_float_array(string_array):
         float_array.append(float(string) if string else None)
     return float_array
 
-get_time_func = FunctionDeclaration(
+get_time_func = types.FunctionDeclaration( # Uses FunctionDeclaration from google.generativeai.types
         name="get_time",
         description="Get the current day, date, or time for a specific time zone. If someone asks for the day of the week, date, or time use this function.",
         # Function parameters are specified in OpenAPI JSON schema format
@@ -455,7 +517,7 @@ get_time_func = FunctionDeclaration(
         },
 )
 
-change_neopixels_func = FunctionDeclaration(
+change_neopixels_func = types.FunctionDeclaration( # Uses FunctionDeclaration from google.generativeai.types
         name="change_led_color",
         description="""Change the color of the rgb neopixel display on the front of your body. You can use this to turn on the display, change the color of the display, or turn off the display. 
         * If you want to turn off the display make red,green, and blue all 0. You can also use this to show your emotions as well like blush by turning red, happy as blue.
@@ -472,7 +534,7 @@ change_neopixels_func = FunctionDeclaration(
         },
 )
 
-change_brightness_func = FunctionDeclaration(
+change_brightness_func = types.FunctionDeclaration( # Uses FunctionDeclaration from google.generativeai.types
         name="change_brightness",
         description="""Change Brightness of the neopixel let. The brightness is a number between 0 and 100. 0 is the lowest.""",
         # Function parameters are specified in OpenAPI JSON schema format
@@ -485,7 +547,7 @@ change_brightness_func = FunctionDeclaration(
         },
 )
 
-change_led_pattern = FunctionDeclaration(
+change_led_pattern = types.FunctionDeclaration( # Uses FunctionDeclaration from google.generativeai.types
         name="change_led_pattern",
         description="""Change the pattern for the neopixel array on the robot. """,
         # Function parameters are specified in OpenAPI JSON schema format
@@ -498,7 +560,7 @@ change_led_pattern = FunctionDeclaration(
         },
 )
 
-get_power_func = FunctionDeclaration(
+get_power_func = types.FunctionDeclaration( # Uses FunctionDeclaration from google.generativeai.types
         name="get_power",
         description="""get the current wattage, voltage, and amperage usage on the robot.""",
         # Function parameters are specified in OpenAPI JSON schema format
@@ -509,7 +571,7 @@ get_power_func = FunctionDeclaration(
         },
 )
 
-take_picture_function = FunctionDeclaration(
+take_picture_function = types.FunctionDeclaration( # Uses FunctionDeclaration from google.generativeai.types
             name="use_robot_eyes",
             description="""Use your camera to take a picture and provide a description and analysis of what you see.
 This function is for understanding the overall scene and the objects present, rather than locating specific items.
@@ -529,7 +591,7 @@ Examples:
 
 )
 
-find_object_function = FunctionDeclaration(
+find_object_function = types.FunctionDeclaration( # Uses FunctionDeclaration from google.generativeai.types
     name="find_object_with_eyes",
     description="""Use your camera to take a picture of your surroundings and **locate a specific object within the image**, providing its coordinates.
 This function helps determine **where an object is positioned in your field of view**. 
@@ -550,7 +612,7 @@ Examples:
 
 )
 
-move_to_object_function = FunctionDeclaration(
+move_to_object_function = types.FunctionDeclaration( # Uses FunctionDeclaration from google.generativeai.types
             name="move_to_object_with_wheels",
             description="""Move around using your wheels to an object in the field of view. 
 This function can be used to find an object and then move to the object that was found. Examples are as follows:
@@ -572,7 +634,7 @@ This function can be used to find an object and then move to the object that was
 
 )
 
-store_voice_func = FunctionDeclaration(
+store_voice_func = types.FunctionDeclaration( # Uses FunctionDeclaration from google.generativeai.types
         name="remember_voice",
         description="Capture introductions and remember someone by their voice using your robot hearing. If someone introduces themselves with statements like \"This is Sam\" or \"I'm Jenny\" or tells you to remember their voice use this function. This is useful for remembering people for later conversations or context.",
         parameters={
@@ -586,7 +648,7 @@ store_voice_func = FunctionDeclaration(
         
 )
 
-change_volume_func = FunctionDeclaration(
+change_volume_func = types.FunctionDeclaration( # Uses FunctionDeclaration from google.generativeai.types
     name="change_voice_volume",
         description="Lower or Raise the volume of your voice.",
         parameters={
@@ -601,7 +663,7 @@ change_volume_func = FunctionDeclaration(
         },
 )
 
-store_image_func = FunctionDeclaration(
+store_image_func = types.FunctionDeclaration( # Uses FunctionDeclaration from google.generativeai.types
         name="remember_image_objects",
         description="Remember things in images.",
         parameters={
@@ -613,7 +675,7 @@ store_image_func = FunctionDeclaration(
         },
 )
 
-move_shimmy = FunctionDeclaration(
+move_shimmy = types.FunctionDeclaration( # Uses FunctionDeclaration from google.generativeai.types
         name="move_around",
         description="""Move around based on voice commands. Example commands are as follows:
 * Move forward 3 feet.
@@ -630,7 +692,7 @@ move_shimmy = FunctionDeclaration(
         },
 )
 
-turn_shimmy = FunctionDeclaration(
+turn_shimmy = types.FunctionDeclaration( # Uses FunctionDeclaration from google.generativeai.types
         name="turn_inplace",
         description="""Turn in place based on voice commands. Example commands are as follows:
 * Turn Around
@@ -647,7 +709,7 @@ turn_shimmy = FunctionDeclaration(
         },
 )
 
-stop_shimmy = FunctionDeclaration(
+stop_shimmy = types.FunctionDeclaration( # Uses FunctionDeclaration from google.generativeai.types
         name="stop_moving",
         description="""Stop moving or turning. This will cancel any current move or turn opperations.
 """,
@@ -660,7 +722,7 @@ stop_shimmy = FunctionDeclaration(
         },
 )
 
-web_browser = FunctionDeclaration(
+web_browser = types.FunctionDeclaration( # Uses FunctionDeclaration from google.generativeai.types
         name="use_web_browser",
         description="""Use a web browser to consult the internet where the answer could be enhanced with additional context, you don know the answer, or you are not confident in your response. 
 This can be used to ground responses with facts found in the internet. All the internet is available to this function. Some of the capabilites available to this function are:
@@ -688,20 +750,20 @@ This can be used to ground responses with facts found in the internet. All the i
 
 
 robot_agents = [
-            get_time_func,
-            #store_voice_func,
-            take_picture_function,
-            web_browser,
-            change_volume_func,
-            change_neopixels_func,
-            change_brightness_func,
-            get_power_func,
-            change_led_pattern,
-            move_shimmy,
-            find_object_function,
-            move_to_object_function,
-            #turn_shimmy,
-            stop_shimmy
+            types.Tool(function_declarations=[get_time_func]),
+            # #store_voice_func,
+            types.Tool(function_declarations=[take_picture_function]),
+            types.Tool(function_declarations=[web_browser]),
+            types.Tool(function_declarations=[change_volume_func]),
+            types.Tool(function_declarations=[change_neopixels_func]),
+            types.Tool(function_declarations=[change_brightness_func]),
+            types.Tool(function_declarations=[get_power_func]),
+            types.Tool(function_declarations=[change_led_pattern]),
+            types.Tool(function_declarations=[move_shimmy]),
+            types.Tool(function_declarations=[find_object_function]),
+            types.Tool(function_declarations=[move_to_object_function]),
+            # #turn_shimmy,
+            types.Tool(function_declarations=[stop_shimmy])
             
         ]
 

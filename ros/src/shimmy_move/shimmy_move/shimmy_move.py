@@ -51,7 +51,7 @@ class ShimmyMoveService(Node):
             '/zed/zed_node/pose',
             self.odom_callback,10)
         self.move_active = False  # Flag to track move status
-        self.wiggle()
+        #self.wiggle()
         self.navigator = BasicNavigator()  # Initialize the navigator
         
     def publish_status(self,status):

@@ -39,7 +39,6 @@ google-cloud-resource-manager
 google-cloud-storage
 google-cloud-texttospeech
 google-crc32c
-google-generativeai
 google-resumable-media
 googleapis-common-protos
 grpc-google-iam-v1
@@ -134,4 +133,7 @@ adafruit-circuitpython-lsm6ds
 squaternion 
 pyusb 
 protobuf
+google-genai==1.12.1
+pasimple==0.0.3
+pulsectl==24.12.0
 

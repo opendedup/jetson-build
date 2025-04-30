@@ -13,7 +13,7 @@ RUN apt update && \
 	apt install -y vim wget alsa-base \
 	alsa-utils \
 	libsndfile1-dev libopenblas-dev libportaudio2 portaudio19-dev zstd python3-pip libhdf5-dev libopencc-dev \
-	ffmpeg libavformat-dev libavcodec-dev libavutil-dev libavdevice-dev libavfilter-dev
+	ffmpeg libavformat-dev libavcodec-dev libavutil-dev libavdevice-dev libavfilter-dev python3-distutils build-essential
 
 COPY requirements.txt .
 RUN python3 -m pip install --upgrade pip && \
@@ -49,7 +49,7 @@ RUN git clone https://github.com/google/sentencepiece && \
 	rm -r -f sentencepiece
 
 
-RUN git clone --depth=1 -b v2.1.0 --recursive https://github.com/nvidia/nemo && \
+RUN git clone --depth=1 -b v2.2.1 --recursive https://github.com/nvidia/nemo && \
     cd nemo && \
     sed 's|^numpy.*|numpy|g' -i requirements/requirements.txt && \
     cat requirements/requirements.txt && \
@@ -63,12 +63,14 @@ RUN LANG=en_US.UTF-8 \
     LC_ALL=en_US.UTF-8 \
     pip install --no-cache-dir --verbose opencc
 
-RUN pip install --no-cache-dir --verbose /opt/nemo_toolkit-1.23.0-py3-none-any.whl
+RUN pip install --no-cache-dir --verbose /opt/nemo_toolkit-2.2.1-py3-none-any.whl
 
 # # pytorch_lightning => import wandb.sdk.lib.json_util as json
 # # AttributeError: module 'wandb' has no attribute 'sdk'
-RUN pip install --no-cache-dir --verbose 'wandb<0.15.8' && \
-	pip install --no-cache-dir hydra-core pytorch-lightning youtokentome cmake ninja editdistance lhotse webdataset jiwer IPython
+RUN pip install --no-cache-dir --verbose 'wandb<0.15.8' setuptools cmake ninja && \
+	pip install --no-cache-dir --verbose hydra-core pytorch-lightning editdistance lhotse webdataset jiwer IPython
+RUN pip install --no-cache-dir --upgrade numpy scipy
+RUN pip install --no-cache-dir --verbose youtokentome
 WORKDIR /opt
 RUN git clone https://github.com/pytorch/audio
 
@@ -82,9 +84,9 @@ RUN pip show nemo_toolkit && python3 -c 'import nemo; print(nemo.__version__)'
 # # set the nemo model cache directory to mounted /data volume
 ENV NEMO_CACHE_DIR=/data/models/nemo
 WORKDIR /opt/
-RUN git clone https://github.com/pyannote/pyannote-audio.git -b 3.3.1
-RUN sed -i '31s/.*/    mine = VersionInfo.parse(mine[:5])/' /opt/pyannote-audio/pyannote/audio/utils/version.py
-WORKDIR /opt/pyannote
+RUN git clone https://github.com/pyannote/pyannote-audio.git -b 3.3.2
+#RUN sed -i '31s/.*/    mine = VersionInfo.parse(mine[:5])/' /opt/pyannote-audio/pyannote/audio/utils/version.py
+WORKDIR /opt/pyannote-audio
 RUN pip --no-cache-dir install -e .
 
 WORKDIR /root/ros2_ws
