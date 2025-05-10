@@ -10,3 +10,6 @@
 [submodule "ros/src/shimmy_chat"]
 	path = ros/src/shimmy_chat
 	url = https://github.com/opendedup/shimmy_chat.git
+[submodule "ros/src/shimmy_ros2_ws"]
+	path = ros/src/shimmy_ros2_ws
+	url = https://github.com/opendedup/shimmy_ros2_ws.git
