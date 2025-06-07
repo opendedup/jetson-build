@@ -37,6 +37,7 @@ rosidl_generate_interfaces(${PROJECT_NAME}
   "msg/VadAudio.msg"
   "msg/ProcessedSpeech.msg"
   "msg/AudioChunk.msg"
+  "msg/FlacVADAudio.msg"
   "srv/SaySomething.srv"
   "srv/GetImage.srv"
   "srv/GetPower.srv"

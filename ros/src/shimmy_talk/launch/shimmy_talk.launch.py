@@ -18,27 +18,7 @@ def launch_setup(context, *args, **kwargs):
         ]
     )
     
-    voice_emb = Node(
-            package='faiss_service',
-            name="voice_emb",
-            executable='service',
-            output='both',
-            parameters=[
-                {"dimensions": 512}
-            ]
-        )
     
-    img_emb = Node(
-            package='faiss_service',
-            executable='service',
-            name="img_emb",
-            namespace='images',
-            output='both',
-            parameters=[
-                {"dimensions": 1408,
-                 "embeddings_path":"/opt/shimmy/mmembeddings/"}
-            ]
-        )
     
     m_service = Node(
             package='shimmy_microcontroller',
@@ -49,23 +29,12 @@ def launch_setup(context, *args, **kwargs):
             ]
         )
     
-    riva_asr = Node(
+    gcp_agent_asr = Node(
             package='shimmy_talk',
-            executable='gemini_asr',
+            executable='gcp_agent_asr',
             name='asr_service',
             output='both',
             parameters=[config]
-        )
-    
-    asr_listener = Node(
-            package='shimmy_talk',
-            executable='listener',
-            name='asr_listener',
-            output='both',
-            parameters=[
-                config
-            ]
-            
         )
     
     image_cap_service = Node(
@@ -77,24 +46,21 @@ def launch_setup(context, *args, **kwargs):
             ('/depth_image_raw', '/zed/zed_node/depth/depth_registered'),
          ]
         )
-    
-    # foxglove_bridge = Node(
-    #         package='foxglove_bridge',
-    #         executable='foxglove_bridge',
-    #     )
-    
-    # shimmy_move_init = Node(
-    #     package="shimmy_move",
-    #     executable="shimmy_move_init",
-    #     output="both",
-    # )
+
+    grpc_communication_node = Node(
+        package='shimmy_cloud_communication',
+        executable='grpc_communication_node',
+        name='grpc_communication_node',
+        output='both',
+        parameters=[{'robot_id': 'shimmy_bot_001'}]
+    )
     
     node_checker = Node(
         package='shimmy_bot_utils',
         executable='node_checker',
         name='shimmy_talk_node_checker',
         output='both',
-        parameters=[{'target_nodes': ['voice_emb','m_service','image_cap_service','asr_listener','asr_service']}]  # Pass the list of nodes to monitor
+        parameters=[{'target_nodes': ['voice_emb','m_service','image_cap_service','asr_listener','asr_service', 'grpc_communication_node']}]  # Pass the list of nodes to monitor
     )
     
     startup_feedback_node = Node(
@@ -102,7 +68,7 @@ def launch_setup(context, *args, **kwargs):
         executable='startup_controller',
         name='shimmy_startup_controller',
         output='both',
-        parameters=[{'target_nodes': ['voice_emb','m_service','image_cap_service','asr_listener','asr_service']}]  # Pass the list of nodes to monitor
+        parameters=[{'target_nodes': ['voice_emb','m_service','image_cap_service','asr_listener','asr_service', 'grpc_communication_node']}]  # Pass the list of nodes to monitor
     
     )
     
@@ -120,11 +86,9 @@ def launch_setup(context, *args, **kwargs):
     return [
         # foxglove_bridge,
         image_cap_service,
-        asr_listener,
-        riva_asr,
+        gcp_agent_asr,
         m_service,
-        #img_emb,
-        voice_emb,
+        grpc_communication_node,
         node_checker,
         startup_feedback_node
         #launch_init_after_talk

@@ -26,6 +26,7 @@ setup(
         'console_scripts': [
             'riva_asr = shimmy_talk.riva_asr:main',
             'listener = shimmy_talk.google_asr_subscriber:main',
+            'gcp_agent_asr = shimmy_talk.gcp_agent_asr:main',
             'walley_listener = shimmy_talk.walley_asr_subscriber:main',
             'whisper_asr = shimmy_talk.whisper_asr:main',
             'gcp_asr = shimmy_talk.gcp_asr:main',
